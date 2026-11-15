@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <thread>
 #include <tuple>
 
 using namespace dkv;
@@ -164,11 +165,19 @@ int main() {
 		CHECK(gen < 63 * 1.1 * 1.5, "generation slower than baseline: %.0f ms", gen); // generous for noise; print it
 
 		Volume e(0.5f);
-		e.fill_chunk(3, 1, -5, &g); Volume f(0.5f); f.fill_chunk(3, 1, -5, &g);
-		bool same = true;
-		for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
+		e.fill_chunk(3, 1, -5, &g);
+		DemoTerrain low; low.seed = g.seed; low.height = 4.0f; // same seed and cell, different height
+		Volume r(0.5f); // reference for low: generated on a fresh thread, so its column cache is cold
+		std::thread([&] { r.fill_chunk(3, 1, -5, &low); }).join();
+		Volume lo(0.5f); lo.fill_chunk(3, 1, -5, &low); // this thread already cached g's columns
+		Volume f(0.5f); f.fill_chunk(3, 1, -5, &g);
+		bool same = true, stable = true;
+		for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) {
 			same &= e.get(48 + x, 16 + y, -80 + z) == f.get(48 + x, 16 + y, -80 + z);
+			stable &= r.get(48 + x, 16 + y, -80 + z) == lo.get(48 + x, 16 + y, -80 + z);
+		}
 		CHECK(same, "generation not deterministic");
+		CHECK(stable, "column cache ignored height: settings are part of the cache key");
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

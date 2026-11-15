@@ -37,10 +37,10 @@ void DemoTerrain::generate_block(const int origin[3], float cell, Voxel out[512]
 	const float H = height;
 	// The 8x8 columns of this block. Blocks are generated in x, y, z order, so a chunk revisits 4 columns;
 	// the cache is keyed by the column's parity, which covers that order (and anything aligned like it).
-	struct Col { uint32_t seed = 0; float cell = 0; int x = 0, z = 0; float hmax = 0; float h[64]; };
+	struct Col { uint32_t seed = 0; float cell = 0, height = 0; int x = 0, z = 0; float hmax = 0; float h[64]; };
 	static thread_local Col col[4];
 	Col &c = col[((origin[0] >> 3) & 1) | (((origin[2] >> 3) & 1) << 1)];
-	if (c.seed != seed || c.cell != cell || c.x != origin[0] || c.z != origin[2]) {
+	if (c.seed != seed || c.cell != cell || c.height != H || c.x != origin[0] || c.z != origin[2]) {
 		c.hmax = -1e9f;
 		for (int i = 0; i < 64; i++) {
 			float wx = (origin[0] + (i & 7)) * cell, wz = (origin[2] + (i >> 3)) * cell;
@@ -51,7 +51,7 @@ void DemoTerrain::generate_block(const int origin[3], float cell, Voxel out[512]
 			c.h[i] = H * (0.17f + cont * 0.08f + mount * std::max(ridge, 0.0f) * ridge * 0.45f + mesa * 0.12f);
 			c.hmax = std::max(c.hmax, c.h[i]);
 		}
-		c.seed = seed; c.cell = cell; c.x = origin[0]; c.z = origin[2];
+		c.seed = seed; c.cell = cell; c.height = H; c.x = origin[0]; c.z = origin[2];
 	}
 	if (origin[1] * cell > c.hmax + 9.0f) { // well above the terrain: air
 		std::fill_n(out, 512, Voxel{});
