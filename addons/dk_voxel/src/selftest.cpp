@@ -29,23 +29,28 @@ struct Soup {
 };
 
 // Meshes every chunk and checks the union is closed and consistently wound: every directed edge a->b
-// must be matched by b->a, across chunk borders and LOD changes.
-static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod) {
+// must be matched by b->a, across chunk borders and LOD changes. lo/hi are the chunk range to mesh
+// (exclusive max), defaulting to the volume's bounds. Mesh positions are chunk-relative, so they are
+// offset by the chunk origin before the checks.
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod);
+
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod, std::array<int, 3> lo, std::array<int, 3> hi) {
 	Soup s;
 	typedef std::tuple<float, float, float> P; // exact: seams must be bit-identical
 	std::map<std::pair<P, P>, int> edges;
 	MeshData m;
 	auto t0 = std::chrono::steady_clock::now();
-	for (int z = 0; z < v.cz; z++)
-		for (int y = 0; y < v.cy; y++)
-			for (int x = 0; x < v.cx; x++) {
+	for (int z = lo[2]; z < hi[2]; z++)
+		for (int y = lo[1]; y < hi[1]; y++)
+			for (int x = lo[0]; x < hi[0]; x++) {
 				if (!v.mesh_chunk(x, y, z, lod(x, y, z), m)) continue;
+				Vec3 origin = v.chunk_origin(x, y, z);
 				for (size_t i = 0; i < m.idx.size(); i += 3) {
 					Vec3 p[3], n[3];
 					P k[3];
 					for (int c = 0; c < 3; c++) {
 						int id = m.idx[i + c];
-						p[c] = Vec3(m.pos[id * 3], m.pos[id * 3 + 1], m.pos[id * 3 + 2]);
+						p[c] = Vec3(m.pos[id * 3], m.pos[id * 3 + 1], m.pos[id * 3 + 2]) + origin;
 						n[c] = Vec3(m.nrm[id * 3], m.nrm[id * 3 + 1], m.nrm[id * 3 + 2]);
 						k[c] = P(p[c].x, p[c].y, p[c].z);
 						s.pts.push_back(p[c]);
@@ -64,6 +69,10 @@ static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &l
 		if (it == edges.end() || it->second != e.second) s.open_edges++;
 	}
 	return s;
+}
+
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod) {
+	return mesh_all(v, lod, {v.bmin[0], v.bmin[1], v.bmin[2]}, {v.bmax[0], v.bmax[1], v.bmax[2]});
 }
 
 int main() {
@@ -122,6 +131,17 @@ int main() {
 		CHECK(d.open_edges == 0 && std::fabs(d.volume - want) < want * 0.01, "open %ld volume %.2f", d.open_edges, d.volume);
 	}
 
+	printf("endless sphere across the origin\n");
+	{
+		Volume v(0.5f);
+		for (int z = -2; z < 2; z++) for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) v.fill_chunk(x, y, z, nullptr);
+		v.edit(SPHERE, BUILD, {0.3f, -0.2f, 0.1f}, {7, 0, 0}, ID, 3, 0, 1, false);
+		double want = 4.0 / 3.0 * PI * 343;
+		Soup a = mesh_all(v, lod0, {-2, -2, -2}, {2, 2, 2}), b = mesh_all(v, mixed, {-2, -2, -2}, {2, 2, 2});
+		CHECK(a.open_edges == 0 && b.open_edges == 0, "open edges %ld %ld", a.open_edges, b.open_edges);
+		CHECK(std::fabs(a.volume - want) < want * 0.01, "volume %.1f", a.volume);
+	}
+
 	printf("terrain\n");
 	{
 		Volume v(8, 4, 8, 0.5f);
@@ -129,7 +149,7 @@ int main() {
 		v.generate(1234, 8);
 		double gen = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		Soup a = mesh_all(v, lod0), b = mesh_all(v, mixed), c = mesh_all(v, [](int, int, int) { return 2; });
-		int n = v.cx * v.cy * v.cz;
+		int n = (v.bmax[0] - v.bmin[0]) * (v.bmax[1] - v.bmin[1]) * (v.bmax[2] - v.bmin[2]);
 		printf("  generate %.0f ms; %d chunks: lod0 %ld tris %.2f ms/chunk, mixed %ld, lod2 %ld tris %.2f ms/chunk\n", gen, n, a.tris, a.ms / n, b.tris, c.tris, c.ms / n);
 		CHECK(a.tris > 10000, "no terrain");
 		CHECK(a.open_edges == 0 && b.open_edges == 0 && c.open_edges == 0, "open edges %ld %ld %ld", a.open_edges, b.open_edges, c.open_edges);

@@ -28,6 +28,7 @@ class VoxelWorld : public Node3D {
 
 	struct Chunk {
 		RID mesh, instance, body, shape;
+		Vector3 offset; // chunk origin in metres, relative to the world node (mesh vertices are chunk-relative)
 		int8_t lod = -1; // LOD on screen, -1 = never meshed
 		bool collision = false; // the mesh on screen was built with collision
 		bool queued = false;
@@ -73,6 +74,17 @@ class VoxelWorld : public Node3D {
 	// Edits and queries are legal before the node enters the tree (e.g. while a level is being built).
 	Transform3D gx() const { return is_inside_tree() ? get_global_transform() : get_transform(); }
 
+	// Chunk index <-> chunk coordinate, for the bounded world create() builds (Task 4 replaces this).
+	int ncx() const { return vol->bmax[0] - vol->bmin[0]; }
+	int ncy() const { return vol->bmax[1] - vol->bmin[1]; }
+	int chunk_index(int x, int y, int z) const { return ((int)((size_t)(z - vol->bmin[2]) * ncy() + (y - vol->bmin[1])) * ncx() + (x - vol->bmin[0])); }
+	void chunk_coord(int i, int &x, int &y, int &z) const {
+		x = vol->bmin[0] + i % ncx();
+		y = vol->bmin[1] + i / ncx() % ncy();
+		z = vol->bmin[2] + i / (ncx() * ncy());
+	}
+	Transform3D chunk_transform(Chunk &c) const { return gx() * Transform3D(Basis(), c.offset); }
+
 	void worker() {
 		for (;;) {
 			Result r;
@@ -83,7 +95,8 @@ class VoxelWorld : public Node3D {
 				r.job = jobs.top();
 				jobs.pop();
 			}
-			int i = r.job.index, x = i % vol->cx, y = i / vol->cx % vol->cy, z = i / (vol->cx * vol->cy);
+			int x, y, z;
+			chunk_coord(r.job.index, x, y, z);
 			auto t0 = std::chrono::steady_clock::now();
 			r.has = vol->mesh_chunk(x, y, z, r.job.lod, r.mesh);
 			r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -136,7 +149,7 @@ class VoxelWorld : public Node3D {
 		std::vector<Job> add;
 		for (int i = 0; i < (int)chunks.size(); i++) {
 			Chunk &c = chunks[i];
-			Vector3 center = (Vector3(i % vol->cx, i / vol->cx % vol->cy, i / (vol->cx * vol->cy)) + Vector3(0.5, 0.5, 0.5)) * cs;
+			Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
 			float d = viewer.distance_to(center);
 			int lo = lod_at(d - hyst), hi = lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
 			int want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
@@ -203,7 +216,7 @@ class VoxelWorld : public Node3D {
 		if (material.is_valid()) rs->mesh_surface_set_material(c.mesh, 0, material->get_rid());
 		if (!c.instance.is_valid()) {
 			c.instance = rs->instance_create2(c.mesh, get_world_3d()->get_scenario());
-			rs->instance_set_transform(c.instance, gx());
+			rs->instance_set_transform(c.instance, chunk_transform(c));
 		}
 		stat_tris += ni / 3 - c.tris;
 		c.tris = ni / 3;
@@ -233,7 +246,7 @@ class VoxelWorld : public Node3D {
 			ps->body_set_collision_layer(c.body, collision_layer);
 			ps->body_set_collision_mask(c.body, 0);
 			ps->body_attach_object_instance_id(c.body, get_instance_id());
-			ps->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, gx());
+			ps->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, chunk_transform(c));
 			ps->body_set_space(c.body, get_world_3d()->get_space());
 			stat_bodies++;
 		} else {
@@ -252,7 +265,7 @@ class VoxelWorld : public Node3D {
 			dkv::EditResult r = vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp);
 			for (int z = r.cmin[2]; z <= r.cmax[2]; z++)
 				for (int y = r.cmin[1]; y <= r.cmax[1]; y++)
-					for (int x = r.cmin[0]; x <= r.cmax[0]; x++) chunks[((size_t)z * vol->cy + y) * vol->cx + x].version++;
+					for (int x = r.cmin[0]; x <= r.cmax[0]; x++) chunks[chunk_index(x, y, z)].version++;
 			need_scan |= r.changed;
 			const float vv = vol->cell * vol->cell * vol->cell;
 			for (int i = 0; i < 256; i++)
@@ -304,11 +317,12 @@ protected:
 			if (!is_inside_tree()) return;
 			RenderingServer *rs = RenderingServer::get_singleton();
 			for (Chunk &c : chunks) {
+				Transform3D xf = chunk_transform(c);
 				if (c.instance.is_valid()) {
-					rs->instance_set_transform(c.instance, gx());
+					rs->instance_set_transform(c.instance, xf);
 					rs->instance_set_visible(c.instance, is_visible_in_tree());
 				}
-				if (c.body.is_valid()) PhysicsServer3D::get_singleton()->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, gx());
+				if (c.body.is_valid()) PhysicsServer3D::get_singleton()->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, xf);
 			}
 		} else if (what == NOTIFICATION_EXIT_WORLD) { // RIDs belong to the world we are leaving; remesh on re-entry
 			for (Chunk &c : chunks) {
@@ -332,6 +346,12 @@ public:
 		for (Chunk &c : chunks) free_chunk(c);
 		vol = std::make_unique<dkv::Volume>(size.x, size.y, size.z, cell_size);
 		chunks.assign((size_t)size.x * size.y * size.z, Chunk());
+		for (int z = 0; z < size.z; z++)
+			for (int y = 0; y < size.y; y++)
+				for (int x = 0; x < size.x; x++) {
+					dkv::Vec3 o = vol->chunk_origin(x, y, z);
+					chunks[chunk_index(x, y, z)].offset = Vector3(o.x, o.y, o.z);
+				}
 		need_scan = true;
 		if (threads <= 0) threads = MAX(1, (int)std::thread::hardware_concurrency() - 2);
 		if (Engine::get_singleton()->is_editor_hint()) return;
@@ -400,7 +420,7 @@ public:
 	void set_lod_error(int lod, float e) {
 		if (vol && lod >= 1 && lod <= 2) vol->lod_error[lod] = e;
 	}
-	Vector3 get_world_size() const { return vol ? Vector3(vol->nx, vol->ny, vol->nz) * vol->cell : Vector3(); }
+	Vector3 get_world_size() const { return vol ? Vector3(vol->bmax[0] - vol->bmin[0], vol->bmax[1] - vol->bmin[1], vol->bmax[2] - vol->bmin[2]) * (dkv::CHUNK * vol->cell) : Vector3(); }
 	int get_pending_count() {
 		std::lock_guard lk(qm);
 		return (int)(jobs.size() + results.size() + pending.size());
