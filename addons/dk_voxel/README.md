@@ -16,10 +16,12 @@ godot --path ../.. -- --shot=/tmp/shot.png          # three staged screenshots +
 ```gdscript
 var world := VoxelWorld.new()
 world.material = my_shader_material          # see voxel_terrain.gdshader
+world.material_set = my_material_set         # VoxelMaterialSet: colours and hardness per id
+world.bounds_size = Vector3i(32, 8, 32)      # 16-cell chunks from the origin; zero = endless
+world.cell_size = 0.5
+world.generator = DemoTerrainGenerator.new() # seed and height are properties; VoxelGenerator is abstract
 add_child(world)
-world.create(Vector3i(32, 8, 32), 0.5)       # size in 16-cell chunks, cell size in metres
-world.generate_terrain(7)                    # or build your own with the calls below
-world.set_material_hardness(6, 255)          # 255 = unbreakable
+world.reset()                                # rebuild with the current properties (also on demand)
 
 var r := world.dig_sphere(pos, 1.6, 1)       # power 1; r.removed = {material: m³}, r.volume
 world.build_sphere(pos, 1.6, 7)
@@ -29,7 +31,9 @@ world.dig_cylinder(xf, radius, half_height, 9)
 var hit := world.raycast(from, dir, 14.0)    # {position, normal, material}; marches the voxels
 ```
 
-Properties: `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer`, `material`.
+Properties: `cell_size`, `bounds_size`, `generator`, `material_set`, `threads`, `lod1_distance`,
+`lod2_distance`, `collision_distance`, `collision_layer`, `material`. Hardness comes from `material_set`
+(255 = unbreakable), and `bounds_size`/`cell_size`/generator changes apply on the next `reset()`.
 The LOD viewer is the viewport's current camera. Edits are main-thread calls; meshing runs on worker
 threads and edited chunks jump the queue.
 

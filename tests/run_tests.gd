@@ -17,9 +17,13 @@ func settle(frames: int) -> void:
 
 
 func _initialize() -> void:
+	var endless := VoxelWorld.new() # not in the tree: get_world_size() must report zero, and free() keeps it out of the leak check
+	check(endless.get_world_size() == Vector3.ZERO, "endless world reports zero size")
+	endless.free()
 	var w := VoxelWorld.new()
+	w.bounds_size = Vector3i(6, 4, 6)
+	w.cell_size = 0.5
 	root.add_child(w)
-	w.create(Vector3i(6, 4, 6), 0.5)
 	w.build_box(Transform3D(Basis(), Vector3(24, 6, 24)), Vector3(20, 4, 20), 3) # slab, top face at y = 10
 	var cam := Camera3D.new()
 	cam.position = Vector3(24, 14, 24)
@@ -59,7 +63,14 @@ func _initialize() -> void:
 	await settle(200)
 	check(absf(ball.position.y - 11.5) < 0.05, "ball lands on freshly built terrain (y = %.3f, want 11.5)" % ball.position.y)
 
-	w.set_material_hardness(3, 255)
+	var mats := VoxelMaterialSet.new()
+	var defs: Array[VoxelMaterialDef] = []
+	for i in 4: # ids 0..3, so id 3 exists to make unbreakable
+		var d := VoxelMaterialDef.new()
+		d.hardness = 255 if i == 3 else 0
+		defs.append(d)
+	mats.materials = defs
+	w.material_set = mats
 	check(not w.dig_sphere(Vector3(10, 9, 10), 2.0, 5).changed, "unbreakable material resists digging")
 
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)

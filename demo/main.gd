@@ -5,22 +5,24 @@ extends Node3D
 ##   Wheel brush size   1-5 build material   R new world   Esc free the mouse
 ## Command line (after --):  --shot=<png>  render a beauty shot and quit
 
-const MATERIALS := { # id: [name, colour a, colour b, pattern scale, roughness, metallic, emission, hardness]
-	0: ["Default", Color(0.5, 0.5, 0.5), Color(0.6, 0.6, 0.6), 0.5, 0.9, 0.0, 0.0, 0],
-	1: ["Grass", Color(0.13, 0.36, 0.09), Color(0.34, 0.52, 0.13), 0.22, 0.95, 0.0, 0.0, 0],
-	2: ["Soil", Color(0.27, 0.15, 0.08), Color(0.44, 0.28, 0.15), 0.3, 0.95, 0.0, 0.0, 0],
-	3: ["Rock", Color(0.27, 0.29, 0.36), Color(0.50, 0.50, 0.54), 0.16, 0.8, 0.0, 0.0, 1],
-	4: ["Sand", Color(0.66, 0.50, 0.28), Color(0.80, 0.68, 0.44), 0.4, 1.0, 0.0, 0.0, 0],
-	5: ["Gold", Color(0.95, 0.55, 0.06), Color(1.0, 0.80, 0.28), 0.35, 0.3, 1.0, 0.2, 1],
-	6: ["Bedrock", Color(0.08, 0.06, 0.11), Color(0.18, 0.14, 0.23), 0.14, 0.6, 0.0, 0.0, 255],
-	7: ["Brick", Color(0.46, 0.20, 0.14), Color(0.62, 0.36, 0.26), 0.3, 0.85, 0.0, 0.0, 1],
-	8: ["Crystal", Color(0.08, 0.60, 0.80), Color(0.60, 0.28, 0.85), 0.2, 0.15, 0.3, 1.2, 2],
-}
+const MATERIALS := [ # name, colour a, colour b, pattern scale, roughness, metallic, emission, hardness
+	["Default", Color(0.5, 0.5, 0.5), Color(0.6, 0.6, 0.6), 0.5, 0.9, 0.0, 0.0, 0],
+	["Grass", Color(0.13, 0.36, 0.09), Color(0.34, 0.52, 0.13), 0.22, 0.95, 0.0, 0.0, 0],
+	["Soil", Color(0.27, 0.15, 0.08), Color(0.44, 0.28, 0.15), 0.3, 0.95, 0.0, 0.0, 0],
+	["Rock", Color(0.27, 0.29, 0.36), Color(0.50, 0.50, 0.54), 0.16, 0.8, 0.0, 0.0, 1],
+	["Sand", Color(0.66, 0.50, 0.28), Color(0.80, 0.68, 0.44), 0.4, 1.0, 0.0, 0.0, 0],
+	["Gold", Color(0.95, 0.55, 0.06), Color(1.0, 0.80, 0.28), 0.35, 0.3, 1.0, 0.2, 1],
+	["Bedrock", Color(0.08, 0.06, 0.11), Color(0.18, 0.14, 0.23), 0.14, 0.6, 0.0, 0.0, 255],
+	["Brick", Color(0.46, 0.20, 0.14), Color(0.62, 0.36, 0.26), 0.3, 0.85, 0.0, 0.0, 1],
+	["Crystal", Color(0.08, 0.60, 0.80), Color(0.60, 0.28, 0.85), 0.2, 0.15, 0.3, 1.2, 2],
+]
 const BUILD_KEYS := [7, 2, 3, 4, 8]
 const WORLD_CHUNKS := Vector3i(32, 8, 32)
 const CELL := 0.5
 
 var world: VoxelWorld
+var generator := DemoTerrainGenerator.new()
+var materials: VoxelMaterialSet
 var player: CharacterBody3D
 var cam: Camera3D
 var hud: Label
@@ -42,7 +44,12 @@ func _ready() -> void:
 		if a.begins_with("--shot="):
 			shot_path = a.trim_prefix("--shot=")
 	_make_environment()
+	materials = _make_material_set()
 	world = VoxelWorld.new()
+	world.bounds_size = WORLD_CHUNKS
+	world.cell_size = CELL
+	world.generator = generator
+	world.material_set = materials
 	world.material = _make_terrain_material()
 	add_child(world)
 	_make_player()
@@ -53,15 +60,37 @@ func _ready() -> void:
 
 
 func _new_world(world_seed: int) -> void:
-	world.create(WORLD_CHUNKS, CELL)
-	for id in MATERIALS:
-		world.set_material_hardness(id, MATERIALS[id][7])
-	world.generate_terrain(world_seed)
+	generator.seed = world_seed
+	world.reset()
 	var size := world.get_world_size()
 	_build_ruins(Vector3(size.x * 0.5 + 14.0, 0, size.z * 0.5 - 6.0))
 	player.position = _ground(Vector3(size.x * 0.5, 0, size.z * 0.5)) + Vector3.UP * 3.0
 	player.velocity = Vector3.ZERO
 	spawned = false
+
+
+func _make_material_set() -> VoxelMaterialSet:
+	var set := VoxelMaterialSet.new()
+	var defs: Array[VoxelMaterialDef] = []
+	for m in MATERIALS:
+		var d := VoxelMaterialDef.new()
+		d.name = m[0]
+		d.color_a = m[1]
+		d.color_b = m[2]
+		d.pattern_scale = m[3]
+		d.roughness = m[4]
+		d.metallic = m[5]
+		d.emission = m[6]
+		d.hardness = m[7]
+		defs.append(d)
+	set.materials = defs
+	return set
+
+
+func _material(id: int) -> VoxelMaterialDef:
+	if id < 0 or id >= materials.materials.size():
+		id = 0
+	return materials.materials[id]
 
 
 ## Sharp-edged structures: the Hermite path of the mesher. Everything here is plain CSG on the voxel field.
@@ -98,18 +127,7 @@ func _make_terrain_material() -> ShaderMaterial:
 	tex.noise = noise
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://addons/dk_voxel/voxel_terrain.gdshader")
-	var ca := PackedColorArray()
-	var cb := PackedColorArray()
-	var pr: Array[Vector4] = []
-	for i in 16:
-		var m: Array = MATERIALS.get(i, MATERIALS[0])
-		ca.append(m[1])
-		cb.append(m[2])
-		pr.append(Vector4(m[3], m[4], m[5], m[6]))
-	mat.set_shader_parameter("noise_tex", tex)
-	mat.set_shader_parameter("color_a", ca)
-	mat.set_shader_parameter("color_b", cb)
-	mat.set_shader_parameter("params", pr)
+	mat.set_shader_parameter("noise_tex", tex) # colour and params come from the material set
 	return mat
 
 
@@ -266,7 +284,7 @@ func _process(_dt: float) -> void:
 	var s := world.get_stats()
 	hud.text = "%d fps   %.2fM tris   %d chunk meshes   %d colliders   %d queued   %.2f ms/chunk on %d threads\nbrush %.1f m   build: %s   gold: %.1f m³%s\nLMB dig  RMB build  Q smooth  E block  F bomb  wheel size  1-5 material  V fly  R new world" % [
 		Engine.get_frames_per_second(), s.triangles / 1e6, s.meshes, s.bodies, s.pending, s.mesh_ms, s.threads,
-		brush, MATERIALS[build_mat][0], gold, "   [FLY]" if fly else ""]
+		brush, _material(build_mat).name, gold, "   [FLY]" if fly else ""]
 	if shot_path != "" and spawned and s.pending == 0 and Engine.get_process_frames() > 60:
 		_beauty_shot()
 
@@ -284,10 +302,11 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 	if debris.size() >= 220:
 		debris.pop_front().queue_free()
 	if not debris_mats.has(id):
+		var d := _material(id)
 		var m := StandardMaterial3D.new()
-		m.albedo_color = MATERIALS.get(id, MATERIALS[0])[1].lerp(MATERIALS.get(id, MATERIALS[0])[2], 0.5)
-		m.roughness = MATERIALS.get(id, MATERIALS[0])[4]
-		m.metallic = MATERIALS.get(id, MATERIALS[0])[5]
+		m.albedo_color = d.color_a.lerp(d.color_b, 0.5)
+		m.roughness = d.roughness
+		m.metallic = d.metallic
 		debris_mats[id] = m
 	var b := RigidBody3D.new()
 	var mi := MeshInstance3D.new()
