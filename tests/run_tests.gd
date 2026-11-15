@@ -73,5 +73,20 @@ func _initialize() -> void:
 	w.material_set = mats
 	check(not w.dig_sphere(Vector3(10, 9, 10), 2.0, 5).changed, "unbreakable material resists digging")
 
+	# A set with only entry 0 leaves every other id to entry 0's def, hardness included.
+	var w2 := VoxelWorld.new()
+	w2.bounds_size = Vector3i(2, 2, 2)
+	w2.cell_size = 0.5
+	root.add_child(w2)
+	w2.build_box(Transform3D(Basis(), Vector3(2, 2, 2)), Vector3(1.5, 1.5, 1.5), 9) # unlisted id
+	var single := VoxelMaterialSet.new()
+	var d0 := VoxelMaterialDef.new()
+	d0.hardness = 255
+	var only: Array[VoxelMaterialDef] = [d0]
+	single.materials = only
+	w2.material_set = single
+	check(not w2.dig_sphere(Vector3(2, 2, 2), 1.0, 0).changed, "unlisted material id inherits entry 0 hardness")
+	w2.free()
+
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)

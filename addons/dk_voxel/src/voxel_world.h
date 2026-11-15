@@ -90,6 +90,8 @@ class VoxelWorld : public Node3D {
 	// Builds the Volume from the properties on first use: first edit, query or _ready. Bounded worlds are
 	// generated synchronously; endless worlds start empty (streaming arrives in Task 5).
 	void ensure_volume();
+	// Def for a material id: entry `id` if the set has one, else entry 0 (a non-empty set), else a default grey zero-hardness def.
+	Ref<VoxelMaterialDef> material_def(int id) const;
 	void apply_hardness();
 	void push_material_uniforms();
 	int thread_count() const { return threads > 0 ? threads : MAX(1, (int)std::thread::hardware_concurrency() - 2); }

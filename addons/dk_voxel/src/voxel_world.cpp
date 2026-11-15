@@ -48,29 +48,29 @@ void VoxelWorld::ensure_volume() {
 	need_scan = true;
 }
 
+Ref<VoxelMaterialDef> VoxelWorld::material_def(int id) const {
+	TypedArray<VoxelMaterialDef> mats = material_set.is_valid() ? material_set->get_materials() : TypedArray<VoxelMaterialDef>();
+	Ref<VoxelMaterialDef> m;
+	if (id >= 0 && id < (int)mats.size()) m = mats[id];
+	if (!m.is_valid() && !mats.is_empty()) m = mats[0]; // missing id (or a null entry): entry 0
+	if (!m.is_valid()) m.instantiate(); // no set, or an empty one: grey default
+	return m;
+}
+
 void VoxelWorld::apply_hardness() {
 	if (!vol) return;
 	memset(vol->hardness, 0, sizeof(vol->hardness));
-	if (!material_set.is_valid()) return;
-	const TypedArray<VoxelMaterialDef> &mats = material_set->get_materials();
-	for (int i = 0; i < (int)mats.size() && i < 256; i++) {
-		Ref<VoxelMaterialDef> m = mats[i];
-		if (m.is_valid()) vol->hardness[i] = (uint8_t)m->get_hardness();
-	}
+	if (!material_set.is_valid() || material_set->get_materials().is_empty()) return;
+	for (int i = 0; i < 256; i++) vol->hardness[i] = (uint8_t)material_def(i)->get_hardness();
 }
 
 void VoxelWorld::push_material_uniforms() {
 	ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(material.ptr());
 	if (!sm) return;
-	Ref<VoxelMaterialDef> fallback;
-	fallback.instantiate(); // grey default
 	PackedColorArray ca, cb;
 	Array params;
-	const TypedArray<VoxelMaterialDef> &mats = material_set.is_valid() ? material_set->get_materials() : TypedArray<VoxelMaterialDef>();
 	for (int i = 0; i < MATERIAL_SLOTS; i++) {
-		Ref<VoxelMaterialDef> m;
-		if (i < (int)mats.size()) m = mats[i];
-		if (!m.is_valid()) m = fallback;
+		Ref<VoxelMaterialDef> m = material_def(i);
 		ca.push_back(m->get_color_a());
 		cb.push_back(m->get_color_b());
 		params.push_back(Vector4(m->get_pattern_scale(), m->get_roughness(), m->get_metallic(), m->get_emission()));
