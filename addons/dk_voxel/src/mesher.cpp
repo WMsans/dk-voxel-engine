@@ -9,8 +9,6 @@
 
 namespace dkv {
 
-static inline uint8_t to_u8(float f) { return (uint8_t)std::clamp((int)std::lround(f), 0, 255); }
-
 namespace {
 
 struct Qef {

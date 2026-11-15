@@ -1,4 +1,5 @@
 // Core self-test: scons selftest && build/selftest
+#include "demo_generator.h"
 #include "voxel_core.h"
 
 #include <chrono>
@@ -16,6 +17,10 @@ static int failures = 0;
 	do { \
 		if (!(cond)) { failures++; printf("  FAIL %s:%d  %s  ", __FILE__, __LINE__, #cond); printf(__VA_ARGS__); printf("\n"); } \
 	} while (0)
+
+static double ms_since(std::chrono::steady_clock::time_point t0) {
+	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
 
 struct Soup {
 	long tris = 0, open_edges = 0, bad_normals = 0;
@@ -142,12 +147,13 @@ int main() {
 		CHECK(std::fabs(a.volume - want) < want * 0.01, "volume %.1f", a.volume);
 	}
 
-	printf("terrain\n");
+	printf("generator\n");
 	{
+		DemoTerrain g; g.seed = 1234; g.height = 32.0f; // = 4 chunks * 16 * 0.5, today's terrain test
 		Volume v(8, 4, 8, 0.5f);
 		auto t0 = std::chrono::steady_clock::now();
-		v.generate(1234, 8);
-		double gen = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		v.fill_all(&g, 8);
+		double gen = ms_since(t0);
 		Soup a = mesh_all(v, lod0), b = mesh_all(v, mixed), c = mesh_all(v, [](int, int, int) { return 2; });
 		int n = (v.bmax[0] - v.bmin[0]) * (v.bmax[1] - v.bmin[1]) * (v.bmax[2] - v.bmin[2]);
 		printf("  generate %.0f ms; %d chunks: lod0 %ld tris %.2f ms/chunk, mixed %ld, lod2 %ld tris %.2f ms/chunk\n", gen, n, a.tris, a.ms / n, b.tris, c.tris, c.ms / n);
@@ -155,6 +161,14 @@ int main() {
 		CHECK(a.open_edges == 0 && b.open_edges == 0 && c.open_edges == 0, "open edges %ld %ld %ld", a.open_edges, b.open_edges, c.open_edges);
 		CHECK(a.bad_normals < a.tris / 200, "flipped %ld of %ld", a.bad_normals, a.tris);
 		CHECK(std::fabs(c.volume - a.volume) < a.volume * 0.02, "lod2 changed the volume: %.0f vs %.0f", c.volume, a.volume);
+		CHECK(gen < 63 * 1.1 * 1.5, "generation slower than baseline: %.0f ms", gen); // generous for noise; print it
+
+		Volume e(0.5f);
+		e.fill_chunk(3, 1, -5, &g); Volume f(0.5f); f.fill_chunk(3, 1, -5, &g);
+		bool same = true;
+		for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
+			same &= e.get(48 + x, 16 + y, -80 + z) == f.get(48 + x, 16 + y, -80 + z);
+		CHECK(same, "generation not deterministic");
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

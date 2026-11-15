@@ -8,10 +8,6 @@
 
 namespace dkv {
 
-static inline uint8_t to_u8(float f) { return (uint8_t)std::clamp((int)std::lround(f), 0, 255); }
-// Signed distance in cells -> density. The band is +-1 cell, like the shipped SDF grids.
-static inline uint8_t sdf_to_density(float cells) { return to_u8(127.5f - cells * 127.5f); }
-
 // One 16^3-cell chunk: 2^3 blocks of 8^3 voxels, each either one uniform voxel or 512 of them.
 struct Volume::Chunk {
 	std::unique_ptr<Block> b[8]; // null = uniform block
@@ -96,9 +92,41 @@ Vec3 Volume::chunk_origin(int cx, int cy, int cz) const {
 }
 
 void Volume::fill_chunk(int cx, int cy, int cz, const Generator *g) {
-	(void)g; // Task 2 generates the 8 blocks here; until then only air exists.
+	std::unique_ptr<Chunk> c = std::make_unique<Chunk>();
+	if (g) {
+		const int base[3] = {cx * CHUNK, cy * CHUNK, cz * CHUNK};
+		for (int bi = 0; bi < 8; bi++) { // block order: x, then y, then z, as in block_at()
+			const int origin[3] = {base[0] + (bi & 1) * BLOCK, base[1] + ((bi >> 1) & 1) * BLOCK, base[2] + ((bi >> 2) & 1) * BLOCK};
+			Voxel tmp[512];
+			g->generate_block(origin, cell, tmp);
+			bool same = true;
+			for (int i = 1; i < 512 && same; i++) same = tmp[i].d == tmp[0].d && (tmp[i].m == tmp[0].m || tmp[0].d == 0);
+			if (same) {
+				c->uniform[bi] = tmp[0];
+			} else {
+				c->b[bi] = std::make_unique<Block>();
+				memcpy(c->b[bi]->v, tmp, sizeof(tmp));
+			}
+		}
+	}
 	std::unique_lock lk(mtx);
-	chunks[ChunkKey(cx, cy, cz)] = std::make_unique<Chunk>();
+	chunks[ChunkKey(cx, cy, cz)] = std::move(c); // replaces an existing chunk
+}
+
+void Volume::fill_all(const Generator *g, int threads) {
+	const int nx = bmax[0] - bmin[0], ny = bmax[1] - bmin[1], nz = bmax[2] - bmin[2];
+	const int total = nx * ny * nz;
+	std::atomic<int> next{0};
+	auto work = [&]() {
+		for (int i; (i = next.fetch_add(1)) < total;) {
+			int x = bmin[0] + i % nx, y = bmin[1] + (i / nx) % ny, z = bmin[2] + i / (nx * ny);
+			fill_chunk(x, y, z, g);
+		}
+	};
+	std::vector<std::thread> pool;
+	for (int i = 1; i < threads; i++) pool.emplace_back(work);
+	work();
+	for (auto &t : pool) t.join();
 }
 
 Voxel *Volume::writable(int x, int y, int z) {
@@ -141,109 +169,6 @@ Voxel Volume::get(int x, int y, int z) const {
 	int bi = (((z >> 3) & 1) << 2) | (((y >> 3) & 1) << 1) | ((x >> 3) & 1);
 	const Block *p = c->b[bi].get();
 	return p ? p->v[vidx(x, y, z)] : c->uniform[bi];
-}
-
-// ---------------------------------------------------------------------------------------------
-// Terrain generator
-// ---------------------------------------------------------------------------------------------
-
-static inline uint32_t hash3(int x, int y, int z, uint32_t s) {
-	uint32_t h = (uint32_t)x * 0x8da6b343u ^ (uint32_t)y * 0xd8163841u ^ (uint32_t)z * 0xcb1ab31fu ^ s;
-	h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-	return h;
-}
-
-// Gradient noise, roughly -1..1.
-static float noise3(float x, float y, float z, uint32_t s) {
-	int xi = (int)std::floor(x), yi = (int)std::floor(y), zi = (int)std::floor(z);
-	float fx = x - xi, fy = y - yi, fz = z - zi;
-	float u = fx * fx * fx * (fx * (fx * 6 - 15) + 10), v = fy * fy * fy * (fy * (fy * 6 - 15) + 10), w = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
-	float c[8];
-	for (int i = 0; i < 8; i++) {
-		int dx = i & 1, dy = (i >> 1) & 1, dz = i >> 2;
-		uint32_t h = hash3(xi + dx, yi + dy, zi + dz, s);
-		float gx = (int)(h & 0xff) - 127.5f, gy = (int)((h >> 8) & 0xff) - 127.5f, gz = (int)((h >> 16) & 0xff) - 127.5f;
-		c[i] = (gx * (fx - dx) + gy * (fy - dy) + gz * (fz - dz)) * (1.0f / 110.0f);
-	}
-	float x00 = c[0] + (c[1] - c[0]) * u, x10 = c[2] + (c[3] - c[2]) * u, x01 = c[4] + (c[5] - c[4]) * u, x11 = c[6] + (c[7] - c[6]) * u;
-	float y0 = x00 + (x10 - x00) * v, y1 = x01 + (x11 - x01) * v;
-	return y0 + (y1 - y0) * w;
-}
-
-static float fbm(float x, float y, float z, uint32_t s, int oct) {
-	float a = 0.5f, sum = 0;
-	for (int i = 0; i < oct; i++, a *= 0.5f, x *= 2, y *= 2, z *= 2) sum += a * noise3(x, y, z, s + i * 1013u);
-	return sum * 2.0f;
-}
-
-void Volume::generate(uint32_t seed, int threads) {
-	const int B0[3] = {bmin[0] * 2, bmin[1] * 2, bmin[2] * 2}, B1[3] = {bmax[0] * 2, bmax[1] * 2, bmax[2] * 2};
-	const float H = bmax[1] * CHUNK * cell; // world height in metres
-	std::unique_lock lk(mtx);
-	std::atomic<int> next{0};
-	auto work = [&]() {
-		float height[64];
-		for (int zb; (zb = next.fetch_add(1)) < B1[2] - B0[2];) {
-			for (int xb = B0[0]; xb < B1[0]; xb++) {
-				float hmax = -1e9f;
-				for (int i = 0; i < 64; i++) {
-					float wx = (xb * 8 + (i & 7)) * cell, wz = ((B0[2] + zb) * 8 + (i >> 3)) * cell;
-					float cont = fbm(wx / 150.0f, 0.5f, wz / 150.0f, seed, 3);
-					float ridge = 1.0f - std::fabs(fbm(wx / 75.0f, 7.5f, wz / 75.0f, seed + 77, 4)) * 1.6f; // crests where the noise crosses zero
-					float mount = std::clamp(cont * 2.2f + 0.45f, 0.0f, 1.0f); // lowlands -> mountains
-					float mesa = std::clamp(fbm(wx / 60.0f, 3.5f, wz / 60.0f, seed + 191, 2) * 5.0f - 0.5f, 0.0f, 1.0f);
-					height[i] = H * (0.17f + cont * 0.08f + mount * std::max(ridge, 0.0f) * ridge * 0.45f + mesa * 0.12f);
-					hmax = std::max(hmax, height[i]);
-				}
-				for (int yb = B0[1]; yb < B1[1]; yb++) {
-					int gz = B0[2] + zb;
-					Chunk *c = chunk_at(xb >> 1, yb >> 1, gz >> 1);
-					int bi = ((gz & 1) << 2) | ((yb & 1) << 1) | (xb & 1);
-					c->b[bi].reset();
-					if (yb * 8 * cell > hmax + 9.0f) { // well above the terrain: air
-						c->uniform[bi] = {};
-						continue;
-					}
-					Voxel tmp[512];
-					for (int i = 0; i < 512; i++) {
-						int lx = i & 7, ly = (i >> 3) & 7, lz = i >> 6;
-						float wx = (xb * 8 + lx) * cell, wy = (yb * 8 + ly) * cell, wz = (gz * 8 + lz) * cell;
-						float h = height[lz * 8 + lx], depth = h - wy;
-						float sd = -depth; // > 0 = air, metres
-						if (sd < 8.0f) {
-							sd += fbm(wx / 16.0f, wy / 11.0f, wz / 16.0f, seed + 5, 2) * 7.0f * std::clamp(wy / H * 3.0f - 0.7f, 0.0f, 1.0f); // cliffs and overhangs up high
-							if (sd < 1.0f) { // tunnels: intersection of two noise sheets; caverns: one blob field
-								float n1 = noise3(wx / 26.0f, wy / 20.0f, wz / 26.0f, seed + 11), n2 = noise3(wx / 26.0f, wy / 20.0f, wz / 26.0f, seed + 23);
-								sd = std::max(sd, (0.075f - std::max(std::fabs(n1), std::fabs(n2))) * 30.0f);
-								sd = std::max(sd, (noise3(wx / 44.0f, wy / 30.0f, wz / 44.0f, seed + 31) - 0.42f) * 40.0f);
-							}
-						}
-						sd = std::min(sd, wy - 1.5f); // bedrock floor
-						uint8_t m = 3; // rock
-						float wob = noise3(wx / 6.0f, wy / 6.0f, wz / 6.0f, seed + 41);
-						if (wy < 1.5f + wob * 0.6f) m = 6; // bedrock
-						else if (depth < 0.7f) m = h < H * 0.17f ? 4 : wy > H * 0.52f + wob * 4.0f ? 3 : 1; // sand low, bare rock high, grass between
-						else if (depth < 3.5f + wob * 2.0f) m = h < H * 0.17f ? 4 : 2; // soil
-						else if (noise3(wx / 7.0f, wy / 7.0f, wz / 7.0f, seed + 53) > 0.5f) m = 5; // gold
-						else if (noise3(wx / 9.0f, wy / 9.0f, wz / 9.0f, seed + 67) > 0.56f) m = 8; // crystal
-						tmp[i] = {sdf_to_density(sd / cell), m};
-					}
-					bool same = true;
-					for (int i = 1; i < 512 && same; i++) same = tmp[i].d == tmp[0].d && (tmp[i].m == tmp[0].m || tmp[0].d == 0);
-					if (same) {
-						c->uniform[bi] = tmp[0];
-					} else {
-						c->b[bi] = std::make_unique<Block>();
-						memcpy(c->b[bi]->v, tmp, sizeof(tmp));
-					}
-				}
-			}
-		}
-	};
-	std::vector<std::thread> pool;
-	for (int i = 1; i < threads; i++) pool.emplace_back(work);
-	work();
-	for (auto &t : pool) t.join();
 }
 
 // ---------------------------------------------------------------------------------------------

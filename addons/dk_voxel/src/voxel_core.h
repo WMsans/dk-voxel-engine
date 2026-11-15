@@ -9,6 +9,7 @@
 //   * chunks live in a map keyed by chunk coordinate: a bounded volume loads them all, an endless one
 //     fills and drops them as viewers move
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -37,6 +38,11 @@ struct Vec3 {
 constexpr int BLOCK = 8; // voxels per data-block edge
 constexpr int CHUNK = 16; // cells per mesh-chunk edge
 constexpr int UNBREAKABLE = 255;
+
+// Density helpers shared by the editor and the demo generator.
+inline uint8_t to_u8(float f) { return (uint8_t)std::clamp((int)std::lround(f), 0, 255); }
+// Signed distance in cells -> density. The band is +-1 cell, like the shipped SDF grids.
+inline uint8_t sdf_to_density(float cells) { return to_u8(127.5f - cells * 127.5f); }
 
 // Floor division, correct for negative operands (chunk of a voxel, chunk of an edit bound).
 inline int floordiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
@@ -76,7 +82,12 @@ struct MeshData {
 enum Shape { SPHERE, BOX, CYLINDER };
 enum Mode { ERASE, BUILD, SMOOTH };
 
-struct Generator; // Task 2: a chunk's voxel source
+struct Generator {
+	virtual ~Generator() = default;
+	// origin = the block's cell coordinates; index = vidx(x & 7, y & 7, z & 7). Must be const, thread-safe
+	// and deterministic in (settings, origin): an unloaded chunk is regenerated exactly.
+	virtual void generate_block(const int origin[3], float cell, Voxel out[512]) const = 0;
+};
 
 struct EditResult {
 	std::array<float, 256> removed{}; // solid volume removed per material, in voxels
@@ -109,10 +120,11 @@ public:
 	std::vector<ChunkKey> loaded_chunks() const;
 	size_t chunk_count() const;
 
-	// Built-in terrain (hills, caves, ore, bedrock). Blocking; runs on `threads` threads.
-	void generate(uint32_t seed, int threads);
-	// Fill (or replace) one chunk. g == nullptr = air; Task 2 adds the generated path.
+	// Fill (or replace) one chunk: g == nullptr = air. Thread-safe: generates without the lock, inserts
+	// under the unique lock.
 	void fill_chunk(int cx, int cy, int cz, const Generator *g);
+	// Fill (or replace) every chunk in the bounds on `threads` threads. Endless volumes have no bounds.
+	void fill_all(const Generator *g, int threads);
 
 	// center/half in world units; basis = 3x3 rotation, shape-local axes in columns. half.x = radius for
 	// SPHERE and CYLINDER (half.y = cylinder half height). strength scales SMOOTH. sharp writes Hermite data.

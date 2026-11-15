@@ -1,5 +1,6 @@
 // VoxelWorld: Godot node around dkv::Volume. Worker threads mesh 16^3-cell chunks nearest-first; the main
 // thread uploads results to the RenderingServer and (near the viewer) to static trimesh bodies.
+#include "demo_generator.h"
 #include "voxel_core.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
@@ -360,7 +361,10 @@ public:
 
 	void generate_terrain(int seed) {
 		ERR_FAIL_COND_MSG(!vol, "VoxelWorld: call create() first");
-		vol->generate((uint32_t)seed, MAX(1, (int)std::thread::hardware_concurrency()));
+		dkv::DemoTerrain gen; // Task 4 replaces this with a generator property
+		gen.seed = (uint32_t)seed;
+		gen.height = vol->bmax[1] * dkv::CHUNK * vol->cell;
+		vol->fill_all(&gen, MAX(1, (int)std::thread::hardware_concurrency()));
 		for (Chunk &c : chunks) c.version++;
 		need_scan = true;
 	}
