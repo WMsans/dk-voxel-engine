@@ -1,0 +1,24 @@
+#!/usr/bin/env python
+"""Build the dk_voxel GDExtension and the host-side core self-test.
+
+    scons platform=linux arch=x86_64 target=template_debug   # extension -> bin/
+    scons selftest && build/selftest                           # core checks, no Godot
+"""
+import os
+
+env = Environment()
+env["ARCOM"] = "${TEMPFILE('$AR $ARFLAGS $TARGET $SOURCES')}"
+SConscript(os.path.join("thirdparty", "godot-cpp", "SConstruct"), {"env": env, "customs": ["custom.py"], "api_version": "4.7"})
+
+# The mesher is the hot path: optimise it even in the editor (template_debug) library.
+env.Append(CXXFLAGS=["-O3"])
+env.VariantDir("build/obj", "src", duplicate=0)
+suffix = env["suffix"].replace(".dev", "").replace(".universal", "")
+Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"],
+                          source=["build/obj/voxel_core.cpp", "build/obj/voxel_world.cpp"]))
+
+# Core self-test: host toolchain only (voxel_core has no Godot dependency).
+t = Environment()
+t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread"], LINKFLAGS=["-pthread"])
+t.VariantDir("build/test", "src", duplicate=0)
+Alias("selftest", t.Program("build/selftest", source=["build/test/voxel_core.cpp", "build/test/selftest.cpp"]))
