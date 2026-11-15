@@ -218,6 +218,50 @@ struct Generator {
 - The build: today's SConstruct plus a documented way for a game's SConstruct to include the addon sources
   (one function or SConscript the game calls with its own source list).
 
+## Projects 2 and 3, as discussed so far
+
+These are not designed yet. Each gets its own brainstorm and design doc once this one is built. This section
+records what was agreed, so the core doesn't close those doors.
+
+### Project 2: authoring and bake
+
+Modelled on how Donkey Kong Bananza builds its levels. That was found by reading the game's data: stage
+placement files, voxel part definitions, baked voxel files.
+
+- **How Bananza does it:** Terrain parts are modelled as meshes (Maya) and voxelized offline, one distance
+  field per material. In the level editor, designers place **voxel field** boxes (bounds, cell size, LOD
+  and material settings) and an ordered list of operations, each with a **priority**:
+  - placed mesh parts: add, erase, or paste over; optionally "becomes a separate object"
+  - cube and cylinder add/erase primitives
+  - material-swap zones
+  An offline bake merges everything into voxel data per field and per story scenario, and the game loads
+  that, not the operation list. No freehand sculpting.
+- **What Jeremy wants:** the same approach, with **Blender** instead of Maya. Godot imports `.blend`/`.glb`
+  itself, so the addon converts imported meshes to voxels inside Godot, and each Blender material slot maps to
+  a voxel material. No Blender add-on.
+- **Proposed shape:**
+  - In a Godot scene, place a voxel field node and fill it with nodes: mesh part (add / erase / paste over),
+    box / cylinder / sphere shape (add / erase), material-swap zone. Each has a priority.
+  - A bake merges them into voxel data saved next to the scene. The core loads it as the "baked data" source.
+  - The bake re-runs when a node changes (a button at first is fine), with the result shown in the editor
+    viewport. Editor streaming and preview belong to this project.
+- **Structures for endless worlds** are the same node setup saved as their own scene and baked into a small
+  voxel stamp. A game's C++ generator places stamps while generating chunks. Stamps can span chunk borders.
+- **Not included:** freehand sculpting brushes, a Blender add-on, Bananza's per-scenario level variants (can be
+  added later with separate baked files).
+
+### Project 3: moving and breakable voxel objects
+
+- **Moving objects:** small bounded voxel volumes, animated (rotate, follow a path) or physics-driven, that
+  the player can still dig. Most likely each is a small bounded `VoxelWorld` with its own transform.
+- **Breakable objects:** authored in the level (a part marked "becomes a separate object"). They break into
+  fragments or come loose.
+- **Support-watching parts:** terrain carries an "anchored ground" mark. A part can opt in to watch whether the
+  anchored ground holding it is destroyed, and fall when it is. This matches what Bananza appears to do
+  (`IsObservePartsGroundBreak`, `RemoveFixedGroundAttribute` in its placement data).
+- **Not included:** automatic separation of arbitrary terrain that gets cut loose. Jeremy confirmed authored
+  objects and support-watching parts are enough. Bananza shows no sign of a general version either.
+
 ## What projects 2 and 3 need from the core
 
 - A baked-data source per chunk (slot reserved in the source order above).
