@@ -180,6 +180,32 @@ int main() {
 		CHECK(stable, "column cache ignored height: settings are part of the cache key");
 	}
 
+	printf("serialise\n");
+	{
+		Volume v(0.5f);
+		for (int z = -1; z <= 1; z++) for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) v.fill_chunk(x, y, z, nullptr);
+		v.edit(BOX, BUILD, {1.1f, 2.2f, 0.3f}, {3, 2, 2.5f}, ID, 7, 0, 1, true); // sharp: Hermite present
+		CHECK(v.is_modified(0, 0, 0), "edit did not mark the chunk");
+		MeshData before; v.mesh_chunk(0, 0, 0, 0, before);
+		auto bytes = v.serialize_chunk(0, 0, 0);
+		v.remove_chunk(0, 0, 0);
+		CHECK(!v.has_chunk(0, 0, 0) && !v.neighbors_ready(0, 0, 0), "remove");
+		CHECK(v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size()) && !v.is_modified(0, 0, 0), "restore");
+		MeshData after; v.mesh_chunk(0, 0, 0, 0, after);
+		CHECK(before.pos == after.pos && before.idx == after.idx, "round trip changed the mesh");
+		CHECK(!v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size() - 1), "truncated data accepted");
+	}
+	printf("edit clips at unloaded chunks\n");
+	{
+		Volume v(0.5f);
+		v.fill_chunk(0, 0, 0, nullptr);                                   // only one chunk loaded
+		EditResult r = v.edit(SPHERE, BUILD, {8, 4, 4}, {6, 0, 0}, ID, 3, 0, 1, false); // reaches into x = 1
+		CHECK(r.changed && v.chunk_count() == 1 && !v.has_chunk(1, 0, 0), "edit created a chunk");
+		EditResult e = v.edit(SPHERE, ERASE, {8, 4, 4}, {6, 0, 0}, ID, 0, 0, 1, false);
+		double m3 = 0; for (float f : e.removed) m3 += f * 0.125;  // removed is in voxels; 0.5^3 m3 each
+		CHECK(m3 > 50 && m3 < 0.5 * 4.0 / 3.0 * 3.14159 * 216, "removed %.0f m3: should be only the part inside chunk 0 (< half sphere)", m3);
+	}
+
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);
 	return failures ? 1 : 0;
 }

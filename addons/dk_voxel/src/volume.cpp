@@ -87,6 +87,80 @@ size_t Volume::chunk_count() const {
 	return chunks.size();
 }
 
+// Block order as in block_at(): x, then y, then z. The node compresses the result.
+std::vector<uint8_t> Volume::serialize_chunk(int cx, int cy, int cz) const {
+	std::shared_lock lk(mtx);
+	const Chunk *c = chunk_at(cx, cy, cz);
+	if (!c) return {};
+	std::vector<uint8_t> out;
+	out.reserve(9 + 8 * (1024 + 512 * 9));
+	out.push_back(1); // format
+	for (int bi = 0; bi < 8; bi++) {
+		const Block *p = c->b[bi].get();
+		out.push_back(p ? (p->hermite ? 2 : 1) : 0);
+		if (!p) {
+			out.push_back(c->uniform[bi].d);
+			out.push_back(c->uniform[bi].m);
+			continue;
+		}
+		const uint8_t *v = reinterpret_cast<const uint8_t *>(p->v);
+		out.insert(out.end(), v, v + sizeof(Block::v));
+		if (p->hermite) {
+			const uint8_t *h = p->hermite.get();
+			out.insert(out.end(), h, h + 512 * 9);
+		}
+	}
+	return out;
+}
+
+bool Volume::deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size_t size) {
+	if (!in_bounds(cx, cy, cz) || !data) return false;
+	size_t at = 0;
+	if (size < 9 || data[at++] != 1) return false; // 1 byte format + 8 kinds
+	auto c = std::make_unique<Chunk>();
+	for (int bi = 0; bi < 8; bi++) {
+		const uint8_t kind = data[at++];
+		if (kind > 2) return false;
+		if (kind == 0) {
+			if (size - at < 2) return false;
+			c->uniform[bi] = {data[at], data[at + 1]};
+			at += 2;
+			continue;
+		}
+		if (size - at < sizeof(Block::v)) return false;
+		auto p = std::make_unique<Block>();
+		memcpy(p->v, data + at, sizeof(Block::v));
+		at += sizeof(Block::v);
+		if (kind == 2) {
+			if (size - at < 512 * 9) return false;
+			p->hermite.reset(new uint8_t[512 * 9]);
+			memcpy(p->hermite.get(), data + at, 512 * 9);
+			at += 512 * 9;
+		}
+		c->b[bi] = std::move(p);
+	}
+	if (at != size) return false; // trailing bytes: not our layout
+	std::unique_lock lk(mtx);
+	chunks[ChunkKey(cx, cy, cz)] = std::move(c); // replaces; not modified
+	return true;
+}
+
+void Volume::remove_chunk(int cx, int cy, int cz) {
+	std::unique_lock lk(mtx);
+	chunks.erase(ChunkKey(cx, cy, cz));
+}
+
+bool Volume::is_modified(int cx, int cy, int cz) const {
+	std::shared_lock lk(mtx);
+	const Chunk *c = chunk_at(cx, cy, cz);
+	return c && c->modified;
+}
+
+void Volume::clear_modified(int cx, int cy, int cz) {
+	std::unique_lock lk(mtx);
+	if (Chunk *c = chunk_at(cx, cy, cz)) c->modified = false;
+}
+
 Vec3 Volume::chunk_origin(int cx, int cy, int cz) const {
 	return Vec3((float)cx * CHUNK * cell, (float)cy * CHUNK * cell, (float)cz * CHUNK * cell);
 }

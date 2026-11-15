@@ -120,6 +120,14 @@ public:
 	std::vector<ChunkKey> loaded_chunks() const;
 	size_t chunk_count() const;
 
+	// Serialise one chunk: u8 format = 1, then per block u8 kind (0 uniform, 1 dense, 2 dense + Hermite)
+	// and the uniform voxel (2 bytes) or 1024 voxel bytes or 1024 + 512*9 Hermite bytes. Empty if missing.
+	std::vector<uint8_t> serialize_chunk(int cx, int cy, int cz) const;
+	bool deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size_t size); // false on bad data
+	void remove_chunk(int cx, int cy, int cz);
+	bool is_modified(int cx, int cy, int cz) const;
+	void clear_modified(int cx, int cy, int cz);
+
 	// Fill (or replace) one chunk: g == nullptr = air. Thread-safe: generates without the lock, inserts
 	// under the unique lock.
 	void fill_chunk(int cx, int cy, int cz, const Generator *g);
