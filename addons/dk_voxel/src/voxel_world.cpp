@@ -3,9 +3,11 @@
 #include "voxel_world.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/physics_server3d.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
@@ -14,6 +16,7 @@
 #include <godot_cpp/classes/world3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <chrono>
 #include <thread>
@@ -22,6 +25,11 @@ using namespace godot;
 
 // The shader samples 32 materials; missing ids read as entry 0.
 static const int MATERIAL_SLOTS = 32;
+
+// Save file header: magic, format version, the volume's cell size, the generator class name, then the
+// core's serialised chunk. One zstd-compressed file per modified chunk.
+static const uint32_t DKVC_MAGIC = 0x43564B44; // 'DKVC', little-endian
+static const uint16_t DKVC_VERSION = 1;
 
 void VoxelWorld::ensure_volume() {
 	if (vol) return;
@@ -48,6 +56,11 @@ void VoxelWorld::ensure_volume() {
 					chunks[idx].offset = Vector3(o.x, o.y, o.z);
 				}
 		vol->fill_all(active_generator.get(), thread_count());
+		if (!save_directory.is_empty()) { // bounded: a file from an earlier run replaces the generated chunk
+			std::vector<uint8_t> raw;
+			for (Chunk &c : chunks)
+				if (read_chunk_file(c.key, raw)) vol->deserialize_chunk(c.key.x, c.key.y, c.key.z, raw.data(), raw.size());
+		}
 		for (Chunk &c : chunks) c.version++;
 	}
 	apply_hardness();
@@ -169,9 +182,12 @@ void VoxelWorld::worker() {
 		}
 		auto t0 = std::chrono::steady_clock::now();
 		const dkv::ChunkKey &key = r.job.key;
-		if (r.job.is_gen) { // endless: put back the edited chunk we kept in memory, else generate it
+		if (r.job.is_gen) { // endless: the chunk's save file, else the edited chunk we kept in memory, else generate it
+			std::vector<uint8_t> raw;
 			bool restored = false;
-			if (!r.job.stored.is_empty()) {
+			if (!save_directory.is_empty() && read_chunk_file(key, raw))
+				restored = vol->deserialize_chunk(key.x, key.y, key.z, raw.data(), raw.size());
+			if (!restored && !r.job.stored.is_empty()) {
 				PackedByteArray raw = r.job.stored.decompress((int)r.job.stored_size, FileAccess::COMPRESSION_ZSTD);
 				restored = raw.size() == (int64_t)r.job.stored_size && vol->deserialize_chunk(key.x, key.y, key.z, (const uint8_t *)raw.ptr(), (size_t)raw.size());
 			}
@@ -208,15 +224,69 @@ void VoxelWorld::free_chunk(Chunk &c, bool body_only /* = false */) {
 	c.lod = -1;
 }
 
-// Keep an edited chunk that is about to be unloaded: compressed in memory (Task 6 writes it to disk).
+// Keep an edited chunk that is about to be unloaded: on disk when save_directory is set (the file is then
+// authoritative), otherwise compressed in memory until something generates it again.
 void VoxelWorld::store_chunk(const dkv::ChunkKey &key) {
 	if (!vol->is_modified(key.x, key.y, key.z)) return;
 	std::vector<uint8_t> raw = vol->serialize_chunk(key.x, key.y, key.z);
 	if (raw.empty()) return;
+	// ponytail: unload writes on the main thread; move to a writer thread if hitches show
+	if (!save_directory.is_empty() && write_chunk_file(key, raw.data(), raw.size())) { // on disk: the file is authoritative
+		vol->clear_modified(key.x, key.y, key.z);
+		return;
+	}
+	// no save_directory (or the write failed): compressed in memory until something generates it again
 	PackedByteArray data;
 	data.resize((int64_t)raw.size());
 	memcpy(data.ptrw(), raw.data(), raw.size());
 	store[key] = {(uint32_t)raw.size(), data.compress(FileAccess::COMPRESSION_ZSTD)};
+}
+
+String VoxelWorld::chunk_file_path(const dkv::ChunkKey &key) const {
+	return save_directory.path_join(String::num_int64(key.x) + "_" + String::num_int64(key.y) + "_" + String::num_int64(key.z) + ".dkvc");
+}
+
+bool VoxelWorld::write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size) {
+	const String path = chunk_file_path(key);
+	String abs = save_directory;
+	if (abs.begins_with("user://") || abs.begins_with("res://")) abs = ProjectSettings::get_singleton()->globalize_path(abs);
+	if (!DirAccess::dir_exists_absolute(abs)) {
+		Error e = DirAccess::make_dir_recursive_absolute(abs);
+		if (e != OK) {
+			UtilityFunctions::push_error("VoxelWorld: cannot create save directory " + abs);
+			return false;
+		}
+	}
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null()) {
+		UtilityFunctions::push_error("VoxelWorld: cannot write " + path);
+		return false;
+	}
+	f->store_32(DKVC_MAGIC);
+	f->store_16(DKVC_VERSION);
+	f->store_float(vol->cell);
+	f->store_pascal_string(generator_class);
+	f->store_32((uint32_t)size);
+	f->store_buffer(data, (uint64_t)size);
+	return true;
+}
+
+// Reads a chunk's save file into `out`. False when there is no file, or when the header names another
+// format, cell size or generator (reported once with the path; the caller falls back to the generator).
+bool VoxelWorld::read_chunk_file(const dkv::ChunkKey &key, std::vector<uint8_t> &out) {
+	const String path = chunk_file_path(key);
+	if (!FileAccess::file_exists(path)) return false;
+	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
+	if (f.is_null()) return false;
+	if (f->get_32() != DKVC_MAGIC || f->get_16() != DKVC_VERSION || f->get_float() != vol->cell || f->get_pascal_string() != generator_class) {
+		UtilityFunctions::push_error("VoxelWorld: save file header mismatch (format/cell size/generator): " + path);
+		return false;
+	}
+	const uint32_t n = f->get_32();
+	PackedByteArray raw = f->get_buffer((int64_t)n);
+	if (raw.size() != (int64_t)n) return false; // truncated or unreadable: generate instead
+	out.assign((const uint8_t *)raw.ptr(), (const uint8_t *)raw.ptr() + raw.size());
+	return true;
 }
 
 // Endless streaming: unload what no viewer wants, then queue a generate job for every wanted chunk that
@@ -505,6 +575,7 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 void VoxelWorld::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("terrain_edited", PropertyInfo(Variant::AABB, "aabb"), PropertyInfo(Variant::DICTIONARY, "result")));
 	ClassDB::bind_method(D_METHOD("reset"), &VoxelWorld::reset);
+	ClassDB::bind_method(D_METHOD("save"), &VoxelWorld::save);
 	ClassDB::bind_method(D_METHOD("dig_sphere", "center", "radius", "power"), &VoxelWorld::dig_sphere, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("build_sphere", "center", "radius", "material"), &VoxelWorld::build_sphere);
 	ClassDB::bind_method(D_METHOD("smooth_sphere", "center", "radius", "strength", "power"), &VoxelWorld::smooth_sphere, DEFVAL(1.0), DEFVAL(0));
@@ -530,6 +601,7 @@ void VoxelWorld::_bind_methods() {
 	PROP(Variant::FLOAT, lod2_distance)
 	PROP(Variant::FLOAT, collision_distance)
 	PROP(Variant::INT, collision_layer)
+	PROP(Variant::STRING, save_directory)
 #undef PROP
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &VoxelWorld::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &VoxelWorld::get_material);
@@ -570,13 +642,39 @@ void VoxelWorld::_notification(int what) {
 
 VoxelWorld::VoxelWorld() { set_notify_transform(true); }
 VoxelWorld::~VoxelWorld() {
+	save(); // flush what this world edited; never deletes files
 	stop_workers();
 	for (Chunk &c : chunks) free_chunk(c);
+}
+
+// Writes every modified loaded chunk and every unloaded stored edit, then clears the modified flags so
+// the same chunk is not written twice. Empty save_directory: nothing goes to disk.
+Error VoxelWorld::save() {
+	if (save_directory.is_empty() || !vol) return OK;
+	Error err = OK;
+	for (const dkv::ChunkKey &key : vol->loaded_chunks())
+		if (vol->is_modified(key.x, key.y, key.z)) {
+			std::vector<uint8_t> raw = vol->serialize_chunk(key.x, key.y, key.z);
+			if (raw.empty()) continue;
+			if (write_chunk_file(key, raw.data(), raw.size())) vol->clear_modified(key.x, key.y, key.z);
+			else err = ERR_FILE_CANT_WRITE;
+		}
+	for (const auto &kv : store) { // unloaded edits: decompressed back to the core's format
+		PackedByteArray raw = kv.second.data.decompress((int64_t)kv.second.raw_size, FileAccess::COMPRESSION_ZSTD);
+			if (raw.size() != (int64_t)kv.second.raw_size) {
+				UtilityFunctions::push_error("VoxelWorld: stored chunk did not decompress");
+				err = ERR_FILE_CORRUPT;
+				continue;
+			}
+			if (!write_chunk_file(kv.first, (const uint8_t *)raw.ptr(), (size_t)raw.size())) err = ERR_FILE_CANT_WRITE;
+	}
+	return err;
 }
 
 void VoxelWorld::reset() {
 	generation++; // results still in flight belong to the world we are dropping
 	stop_workers();
+	save(); // flush what this world edited; never deletes files
 	for (Chunk &c : chunks) free_chunk(c);
 	chunks.clear();
 	chunk_lookup.clear();
@@ -702,7 +800,10 @@ void VoxelWorld::set_material(const Ref<Material> &m) {
 		if (c.mesh.is_valid()) RenderingServer::get_singleton()->mesh_surface_set_material(c.mesh, 0, m.is_valid() ? m->get_rid() : RID());
 	push_material_uniforms();
 }
-void VoxelWorld::set_generator(const Ref<VoxelGenerator> &g) { generator = g; }
+void VoxelWorld::set_generator(const Ref<VoxelGenerator> &g) {
+	generator = g;
+	generator_class = g.is_valid() ? g->get_class() : String();
+}
 void VoxelWorld::set_material_set(const Ref<VoxelMaterialSet> &s) {
 	material_set = s;
 	apply_hardness();

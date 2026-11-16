@@ -72,6 +72,8 @@ class VoxelWorld : public Node3D {
 	std::vector<Chunk> chunks; // bounded: one per chunk in the bounds, indexed as in the Volume
 	std::unordered_map<dkv::ChunkKey, int32_t, dkv::ChunkKeyHash> chunk_lookup; // endless: key -> index in chunks
 	std::unordered_map<dkv::ChunkKey, StoredChunk, dkv::ChunkKeyHash> store; // endless: unloaded edits
+	String save_directory; // empty = edits never reach disk; the unload store differs, the path is the same
+	String generator_class; // `generator`'s class name in save headers, empty when there is none
 	std::vector<Viewer> active_viewers;
 	std::shared_ptr<const dkv::Generator> active_generator; // rebuilt by ensure_volume(), read by the workers
 	Ref<Material> material;
@@ -129,6 +131,12 @@ class VoxelWorld : public Node3D {
 	void stream_endless();
 	void store_chunk(const dkv::ChunkKey &key);
 
+	// One zstd file per modified chunk: `<save_directory>/<x>_<y>_<z>.dkvc`. read_chunk_file() is false
+	// when there is no file or its header does not match this world (it pushes an error in that case).
+	String chunk_file_path(const dkv::ChunkKey &key) const;
+	bool write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size);
+	bool read_chunk_file(const dkv::ChunkKey &key, std::vector<uint8_t> &out);
+
 	// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
 	void scan();
 
@@ -150,6 +158,10 @@ public:
 
 	// Rebuild the volume from the current properties: applies the generator and the material set again.
 	void reset();
+
+	// Writes every modified loaded chunk and every unloaded stored edit to save_directory, then clears the
+	// modified flags. A no-op returning OK when save_directory is empty.
+	Error save();
 
 	Dictionary dig_sphere(Vector3 c, float r, int power);
 	Dictionary build_sphere(Vector3 c, float r, int mat);
@@ -174,6 +186,8 @@ public:
 	Ref<Material> get_material() const { return material; }
 	void set_generator(const Ref<VoxelGenerator> &g);
 	Ref<VoxelGenerator> get_generator() const { return generator; }
+	void set_save_directory(const String &v) { save_directory = v; }
+	String get_save_directory() const { return save_directory; }
 	void set_material_set(const Ref<VoxelMaterialSet> &s);
 	Ref<VoxelMaterialSet> get_material_set() const { return material_set; }
 	void set_cell_size(float v) { cell_size = v; }

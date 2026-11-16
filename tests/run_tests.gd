@@ -17,6 +17,27 @@ func settle(frames: int) -> void:
 		await physics_frame
 
 
+## Deletes a save directory and everything under it (DirAccess has no recursive remove).
+func rm_dir(path: String) -> void:
+	var abs := ProjectSettings.globalize_path(path)
+	if not DirAccess.dir_exists_absolute(abs):
+		return
+	var d := DirAccess.open(path)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var f := d.get_next()
+	while f != "":
+		if f != "." and f != "..":
+			if d.current_is_dir():
+				rm_dir(path.path_join(f))
+			else:
+				DirAccess.remove_absolute(path.path_join(f))
+		f = d.get_next()
+	d.list_dir_end()
+	DirAccess.remove_absolute(abs)
+
+
 ## Waits until every chunk under `aabb` (global) is loaded and meshed at its wanted LOD; with
 ## `need_collision`, also until every chunk with a surface has a body.
 func await_ready(w: VoxelWorld, aabb: AABB, need_collision := true, frames := 3000) -> bool:
@@ -255,6 +276,125 @@ func _initialize() -> void:
 	check(not w6.is_area_ready(AABB(Vector3(-100, 0, -100), Vector3(200, 64, 200)), false), "rotated world transforms all 8 corners of the area")
 	w6.free()
 	v6.free()
+
+	# Saving: save_directory writes edited chunks, so a new world on the same directory loads the crater.
+	var save_dir := "user://dkv_test_save"
+	rm_dir(save_dir)
+	var s7 := VoxelWorld.new()
+	s7.cell_size = 0.5
+	var gen7 := DemoTerrainGenerator.new()
+	gen7.seed = 3
+	s7.generator = gen7
+	s7.save_directory = save_dir
+	root.add_child(s7)
+	var v7 := VoxelViewer.new()
+	v7.position = Vector3(0, 40, 0)
+	root.add_child(v7)
+	check(await await_ready(s7, area), "save: endless area ready")
+	check(await await_idle(s7), "save: endless world settled")
+	var g7 := s7.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	var ground7: float = g7.position.y
+	check(s7.dig_sphere(g7.position, 3.0, 255).changed, "save: endless crater dug")
+	check(s7.save() == OK, "save() returns OK")
+	s7.free()
+	v7.free()
+
+	var s8 := VoxelWorld.new()
+	s8.cell_size = 0.5
+	var gen8 := DemoTerrainGenerator.new()
+	gen8.seed = 3
+	s8.generator = gen8
+	s8.save_directory = save_dir
+	root.add_child(s8)
+	var v8 := VoxelViewer.new()
+	v8.position = Vector3(0, 40, 0)
+	root.add_child(v8)
+	check(await await_ready(s8, area), "save round trip: area ready in the new world")
+	var back8 := s8.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back8.is_empty() and back8.position.y < ground7 - 2.5, "save round trip restores the crater (y %.2f -> %.2f)" % [ground7, back8.get("position", Vector3.ZERO).y])
+	s8.free()
+	v8.free()
+
+	# Freeing a world flushes its edited chunks even without an explicit save().
+	rm_dir(save_dir)
+	var s9 := VoxelWorld.new()
+	s9.cell_size = 0.5
+	var gen9 := DemoTerrainGenerator.new()
+	gen9.seed = 3
+	s9.generator = gen9
+	s9.save_directory = save_dir
+	root.add_child(s9)
+	var v9 := VoxelViewer.new()
+	v9.position = Vector3(0, 40, 0)
+	root.add_child(v9)
+	check(await await_ready(s9, area), "free without save: endless area ready")
+	check(await await_idle(s9), "free without save: endless world settled")
+	var g9 := s9.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	var ground9: float = g9.position.y
+	s9.dig_sphere(g9.position, 3.0, 255)
+	s9.queue_free()
+	await process_frame
+	await process_frame
+
+	var s10 := VoxelWorld.new()
+	s10.cell_size = 0.5
+	var gen10 := DemoTerrainGenerator.new()
+	gen10.seed = 3
+	s10.generator = gen10
+	s10.save_directory = save_dir
+	root.add_child(s10)
+	var v10 := VoxelViewer.new()
+	v10.position = Vector3(0, 40, 0)
+	root.add_child(v10)
+	check(await await_ready(s10, area), "free without save: area ready in the new world")
+	var back10 := s10.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back10.is_empty() and back10.position.y < ground9 - 2.5, "free without save keeps edits (y %.2f -> %.2f)" % [ground9, back10.get("position", Vector3.ZERO).y])
+	s10.free()
+	v10.free()
+
+	# A save written with another cell size is rejected, not loaded (the error text is expected).
+	var s11 := VoxelWorld.new()
+	s11.cell_size = 1.0
+	var gen11 := DemoTerrainGenerator.new()
+	gen11.seed = 3
+	s11.generator = gen11
+	s11.save_directory = save_dir
+	root.add_child(s11)
+	var v11 := VoxelViewer.new()
+	v11.position = Vector3(0, 40, 0)
+	root.add_child(v11)
+	check(await await_ready(s11, area), "cell size mismatch: area ready")
+	var back11 := s11.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	print("  ..  cell size 1.0 ground y = %.2f (was %.2f)" % [back11.get("position", Vector3.ZERO).y, ground9])
+	check(not back11.is_empty() and absf(back11.position.y - ground9) < 1.0, "cell size mismatch rejected (y %.2f, was %.2f)" % [back11.get("position", Vector3.ZERO).y, ground9])
+	s11.free()
+	v11.free()
+
+	# A bounded world saves its edited chunks and rebuilds from the same directory.
+	var bsave := "user://dkv_test_save_bounded"
+	rm_dir(bsave)
+	var b1 := VoxelWorld.new()
+	b1.bounds_size = Vector3i(6, 4, 6)
+	b1.cell_size = 0.5
+	b1.save_directory = bsave
+	root.add_child(b1)
+	b1.build_box(Transform3D(Basis(), Vector3(24, 6, 24)), Vector3(20, 4, 20), 3) # slab, top face at y = 10
+	var digc := Vector3(24, 10, 24)
+	b1.dig_sphere(digc, 3.0, 255)
+	check(b1.save() == OK, "bounded save() returns OK")
+	b1.free()
+
+	var b2 := VoxelWorld.new()
+	b2.bounds_size = Vector3i(6, 4, 6)
+	b2.cell_size = 0.5
+	b2.save_directory = bsave
+	root.add_child(b2)
+	# The saved chunks are the whole edited slab, so the new world has it back without rebuilding it.
+	var top := b2.raycast(Vector3(10, 20, 10), Vector3.DOWN, 30.0) # outside the crater
+	check(not top.is_empty() and absf(top.position.y - 10.0) < 0.05, "bounded world loads its saved slab (top y = %.2f)" % top.get("position", Vector3.ZERO).y)
+	var replay := b2.dig_sphere(digc, 3.0, 255)
+	check(absf(replay.volume) < 1.0, "bounded world loads its save (replayed dig removes %.2f m³)" % replay.volume)
+	b2.free()
 
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)
