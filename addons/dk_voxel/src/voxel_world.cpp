@@ -182,15 +182,15 @@ void VoxelWorld::worker() {
 		}
 		auto t0 = std::chrono::steady_clock::now();
 		const dkv::ChunkKey &key = r.job.key;
-		if (r.job.is_gen) { // endless: the chunk's save file, else the edited chunk we kept in memory, else generate it
+		if (r.job.is_gen) { // endless: the edited chunk we kept in memory, else the chunk's save file, else generate it
 			std::vector<uint8_t> raw;
 			bool restored = false;
-			if (!save_directory.is_empty() && read_chunk_file(key, raw))
-				restored = vol->deserialize_chunk(key.x, key.y, key.z, raw.data(), raw.size());
-			if (!restored && !r.job.stored.is_empty()) {
+			if (!r.job.stored.is_empty()) {
 				PackedByteArray raw = r.job.stored.decompress((int)r.job.stored_size, FileAccess::COMPRESSION_ZSTD);
 				restored = raw.size() == (int64_t)r.job.stored_size && vol->deserialize_chunk(key.x, key.y, key.z, (const uint8_t *)raw.ptr(), (size_t)raw.size());
 			}
+			if (!restored && !save_directory.is_empty() && read_chunk_file(key, raw))
+				restored = vol->deserialize_chunk(key.x, key.y, key.z, raw.data(), raw.size());
 			if (!restored) vol->fill_chunk(key.x, key.y, key.z, active_generator.get());
 			r.has = true;
 		} else {
@@ -233,6 +233,7 @@ void VoxelWorld::store_chunk(const dkv::ChunkKey &key) {
 	// ponytail: unload writes on the main thread; move to a writer thread if hitches show
 	if (!save_directory.is_empty() && write_chunk_file(key, raw.data(), raw.size())) { // on disk: the file is authoritative
 		vol->clear_modified(key.x, key.y, key.z);
+		store.erase(key); // a stale store entry would shadow the file we just wrote
 		return;
 	}
 	// no save_directory (or the write failed): compressed in memory until something generates it again
@@ -257,17 +258,25 @@ bool VoxelWorld::write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data,
 			return false;
 		}
 	}
-	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
-	if (f.is_null()) {
-		UtilityFunctions::push_error("VoxelWorld: cannot write " + path);
+	const String tmp = path + String(".tmp");
+	{
+		Ref<FileAccess> f = FileAccess::open_compressed(tmp, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
+		if (f.is_null()) {
+			UtilityFunctions::push_error("VoxelWorld: cannot write " + tmp);
+			return false;
+		}
+		f->store_32(DKVC_MAGIC);
+		f->store_16(DKVC_VERSION);
+		f->store_float(vol->cell);
+		f->store_pascal_string(generator_class);
+		f->store_32((uint32_t)size);
+		f->store_buffer(data, (uint64_t)size);
+	} // closed here: a reader never sees a half-written file
+	Error e = DirAccess::rename_absolute(tmp, path);
+	if (e != OK) {
+		UtilityFunctions::push_error("VoxelWorld: cannot rename " + tmp + " to " + path);
 		return false;
 	}
-	f->store_32(DKVC_MAGIC);
-	f->store_16(DKVC_VERSION);
-	f->store_float(vol->cell);
-	f->store_pascal_string(generator_class);
-	f->store_32((uint32_t)size);
-	f->store_buffer(data, (uint64_t)size);
 	return true;
 }
 
@@ -284,7 +293,10 @@ bool VoxelWorld::read_chunk_file(const dkv::ChunkKey &key, std::vector<uint8_t> 
 	}
 	const uint32_t n = f->get_32();
 	PackedByteArray raw = f->get_buffer((int64_t)n);
-	if (raw.size() != (int64_t)n) return false; // truncated or unreadable: generate instead
+	if (raw.size() != (int64_t)n) {
+		UtilityFunctions::push_error("VoxelWorld: save file body is short (truncated): " + path);
+		return false; // generate instead
+	}
 	out.assign((const uint8_t *)raw.ptr(), (const uint8_t *)raw.ptr() + raw.size());
 	return true;
 }
@@ -652,8 +664,10 @@ VoxelWorld::~VoxelWorld() {
 Error VoxelWorld::save() {
 	if (save_directory.is_empty() || !vol) return OK;
 	Error err = OK;
+	std::vector<dkv::ChunkKey> written;
 	for (const dkv::ChunkKey &key : vol->loaded_chunks())
-		if (vol->is_modified(key.x, key.y, key.z)) {
+		if (vol->is_modified(key.x, key.y, key.z)) { // loaded chunks are newer than any store entry
+			store.erase(key);
 			std::vector<uint8_t> raw = vol->serialize_chunk(key.x, key.y, key.z);
 			if (raw.empty()) continue;
 			if (write_chunk_file(key, raw.data(), raw.size())) vol->clear_modified(key.x, key.y, key.z);
@@ -661,13 +675,15 @@ Error VoxelWorld::save() {
 		}
 	for (const auto &kv : store) { // unloaded edits: decompressed back to the core's format
 		PackedByteArray raw = kv.second.data.decompress((int64_t)kv.second.raw_size, FileAccess::COMPRESSION_ZSTD);
-			if (raw.size() != (int64_t)kv.second.raw_size) {
-				UtilityFunctions::push_error("VoxelWorld: stored chunk did not decompress");
-				err = ERR_FILE_CORRUPT;
-				continue;
-			}
-			if (!write_chunk_file(kv.first, (const uint8_t *)raw.ptr(), (size_t)raw.size())) err = ERR_FILE_CANT_WRITE;
+		if (raw.size() != (int64_t)kv.second.raw_size) {
+			UtilityFunctions::push_error("VoxelWorld: stored chunk did not decompress");
+			err = ERR_FILE_CORRUPT;
+			continue;
+		}
+		if (!write_chunk_file(kv.first, (const uint8_t *)raw.ptr(), (size_t)raw.size())) err = ERR_FILE_CANT_WRITE;
+		else written.push_back(kv.first); // erased after the loop: the map must not change while iterating
 	}
+	for (const dkv::ChunkKey &key : written) store.erase(key);
 	return err;
 }
 

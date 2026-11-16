@@ -292,6 +292,7 @@ func _initialize() -> void:
 	root.add_child(v7)
 	check(await await_ready(s7, area), "save: endless area ready")
 	check(await await_idle(s7), "save: endless world settled")
+	await settle(100) # earlier worlds (all freed with queue_free) must be gone
 	var g7 := s7.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
 	var ground7: float = g7.position.y
 	check(s7.dig_sphere(g7.position, 3.0, 255).changed, "save: endless crater dug")
@@ -351,6 +352,7 @@ func _initialize() -> void:
 	check(not back10.is_empty() and back10.position.y < ground9 - 2.5, "free without save keeps edits (y %.2f -> %.2f)" % [ground9, back10.get("position", Vector3.ZERO).y])
 	s10.free()
 	v10.free()
+	v9.free()
 
 	# A save written with another cell size is rejected, not loaded (the error text is expected).
 	var s11 := VoxelWorld.new()
@@ -394,7 +396,120 @@ func _initialize() -> void:
 	check(not top.is_empty() and absf(top.position.y - 10.0) < 0.05, "bounded world loads its saved slab (top y = %.2f)" % top.get("position", Vector3.ZERO).y)
 	var replay := b2.dig_sphere(digc, 3.0, 255)
 	check(absf(replay.volume) < 1.0, "bounded world loads its save (replayed dig removes %.2f m³)" % replay.volume)
+	var floor := b2.raycast(digc + Vector3(0, 10, 0), Vector3.DOWN, 30.0)
+	check(not floor.is_empty() and absf(floor.position.y - 7.0) < 0.25, "bounded world loads the crater floor (y = %.2f)" % floor.get("position", Vector3.ZERO).y)
 	b2.free()
+
+	# A store entry must not shadow or overwrite a newer file: save after moving away and back.
+	var s12_dir := "user://dkv_test_save_reload"
+	rm_dir(s12_dir)
+	var s12 := VoxelWorld.new()
+	s12.cell_size = 0.5
+	var gen12 := DemoTerrainGenerator.new()
+	gen12.seed = 3
+	s12.generator = gen12
+	s12.save_directory = ""
+	root.add_child(s12)
+	var v12 := VoxelViewer.new()
+	v12.position = Vector3(0, 40, 0)
+	root.add_child(v12)
+	check(await await_ready(s12, area), "reload: endless area ready")
+	check(await await_idle(s12), "reload: endless world settled")
+	var g12 := s12.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	var ground12: float = g12.position.y
+	check(s12.dig_sphere(g12.position, 3.0, 255).changed, "reload: endless crater dug")
+	v12.position = Vector3(600, 40, 0) # the edited chunk unloads into the memory store
+	for i in 900:
+		await process_frame
+		if s12.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0).is_empty():
+			break
+	s12.save_directory = s12_dir
+	check(s12.save() == OK, "reload: store written after the move away")
+	v12.position = Vector3(0, 40, 0) # loads the file; the stale store entry must not shadow it
+	check(await await_ready(s12, area), "reload: endless area reloads")
+	check(s12.dig_sphere(Vector3(0, 12.0, 0), 2.0, 255).changed, "reload: crater dug deeper")
+	v12.position = Vector3(600, 40, 0)
+	for i in 900:
+		await process_frame
+		if s12.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0).is_empty():
+			break
+	v12.position = Vector3(0, 40, 0)
+	check(await await_ready(s12, area), "reload: endless area reloads after the second move")
+	check(s12.save() == OK, "reload: save after the second move")
+	s12.free()
+	v12.free()
+
+	var s13 := VoxelWorld.new()
+	s13.cell_size = 0.5
+	var gen13 := DemoTerrainGenerator.new()
+	gen13.seed = 3
+	s13.generator = gen13
+	s13.save_directory = s12_dir
+	root.add_child(s13)
+	var v13 := VoxelViewer.new()
+	v13.position = Vector3(0, 40, 0)
+	root.add_child(v13)
+	check(await await_ready(s13, area), "reload: area ready in the new world")
+	var back13 := s13.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back13.is_empty() and back13.position.y < ground12 - 3.5, "store entry does not overwrite a newer file (y %.2f -> %.2f)" % [ground12, back13.get("position", Vector3.ZERO).y])
+	s13.free()
+	v13.free()
+
+	# A file whose body is shorter than its header says must be reported and fall back to the generator.
+	var short_dir := "user://dkv_test_save_short"
+	rm_dir(short_dir)
+	var s14 := VoxelWorld.new()
+	s14.cell_size = 0.5
+	var gen14 := DemoTerrainGenerator.new()
+	gen14.seed = 3
+	s14.generator = gen14
+	s14.save_directory = short_dir
+	root.add_child(s14)
+	var v14 := VoxelViewer.new()
+	v14.position = Vector3(0, 40, 0)
+	root.add_child(v14)
+	check(await await_ready(s14, area), "short body: endless area ready")
+	var g14 := s14.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	var ground14: float = g14.position.y
+	check(s14.dig_sphere(g14.position, 3.0, 255).changed, "short body: crater dug")
+	check(s14.save() == OK, "short body: save() returns OK")
+	var victim_path := short_dir.path_join("0_1_0.dkvc") # the chunk the dig centre sits in
+	var victim_file := FileAccess.open_compressed(victim_path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	check(victim_file != null, "short body: save file exists (%s)" % victim_path)
+	if victim_file != null:
+		var magic := victim_file.get_32()
+		var version := victim_file.get_16()
+		var cell := victim_file.get_float()
+		var gen_name := victim_file.get_pascal_string()
+		var body := victim_file.get_buffer(victim_file.get_32())
+		victim_file = null
+		# The header now claims a body longer than the stream holds: the reader sees a short read.
+		var corrupt := FileAccess.open_compressed(victim_path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+		corrupt.store_32(magic)
+		corrupt.store_16(version)
+		corrupt.store_float(cell)
+		corrupt.store_pascal_string(gen_name)
+		corrupt.store_32(body.size() + 4096)
+		corrupt.store_buffer(body)
+		corrupt = null
+	s14.free()
+	v14.free()
+
+	var s15 := VoxelWorld.new()
+	s15.cell_size = 0.5
+	var gen15 := DemoTerrainGenerator.new()
+	gen15.seed = 3
+	s15.generator = gen15
+	s15.save_directory = short_dir
+	root.add_child(s15)
+	var v15 := VoxelViewer.new()
+	v15.position = Vector3(0, 40, 0)
+	root.add_child(v15)
+	check(await await_ready(s15, area), "short body: area ready in the new world")
+	var back15 := s15.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back15.is_empty() and absf(back15.position.y - ground14) < 0.05, "short body falls back to generated terrain (y %.2f, was %.2f)" % [back15.get("position", Vector3.ZERO).y, ground14])
+	s15.free()
+	v15.free()
 
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)
