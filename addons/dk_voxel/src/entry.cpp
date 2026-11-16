@@ -1,7 +1,8 @@
 // The addon's GDExtension entry point. Only this translation unit defines dk_voxel_library_init; games
 // that compile the addon sources into their own library (see ../SConscript) provide their own entry symbol
 // and leave this file out.
-#include "register_types.h"
+#include "core/register_types.h"
+#include "terrain/terrain_resources.h"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
@@ -9,7 +10,9 @@
 using namespace godot;
 
 static void dk_voxel_init(ModuleInitializationLevel level) {
-	if (level == MODULE_INITIALIZATION_LEVEL_SCENE) dk_voxel_register_types();
+	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
+	dk_voxel_register_types();
+	dk_voxel_register_terrain();
 }
 static void dk_voxel_uninit(ModuleInitializationLevel) {}
 

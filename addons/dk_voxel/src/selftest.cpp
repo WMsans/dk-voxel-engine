@@ -1,6 +1,6 @@
 // Core self-test: scons selftest && build/selftest
-#include "demo_terrain.h"
-#include "level_terrain.h"
+#include "terrain/demo_terrain.h"
+#include "terrain/level_terrain.h"
 #include "core/noise.h"
 #include "core/voxel_generator.h"
 #include "core/voxel_volume.h"

@@ -8,8 +8,9 @@
 #
 # `dk_sources` are the addon's .cpp files as SCons nodes in the addon's `build/obj` VariantDir: they
 # compile with the game's `env` and flags, but their objects land next to the addon, not in the game's
-# build tree. `dk_include` is the addon's `src/`, where the headers live (and where the game's
-# `#include "register_types.h"` resolves). The addon's own GDExtension entry symbol is `src/entry.cpp`,
+# build tree. `dk_include` is the addon's `src/`: headers are included by folder, `core/` (what every game
+# reuses unchanged: the node, streaming, saving, materials, register_types.h) and `terrain/` (the shipped
+# generation profiles, which a game adds to or replaces). The addon's own GDExtension entry symbol is `src/entry.cpp`,
 # which is deliberately left out: the game's library provides its own. The addon's own SConstruct adds it.
 # The SConscript also appends `-O3` to the caller's `env`, so every source built with that `env` is
 # affected, the game's own sources included. godot-cpp appends its `-O2`/`-O0` to `CCFLAGS`, which SCons
@@ -31,16 +32,17 @@ src = here.Dir("src")
 obj = here.Dir("build/obj")
 env.VariantDir(obj, src, duplicate=0)
 sources = [obj.File(name) for name in (
+	"core/register_types.cpp",
+	"core/voxel_chunks.cpp",
+	"core/voxel_materials.cpp",
 	"core/voxel_mesher.cpp",
+	"core/voxel_resources.cpp",
+	"core/voxel_save.cpp",
+	"core/voxel_stream.cpp",
 	"core/voxel_volume.cpp",
-	"demo_terrain.cpp",
-	"level_terrain.cpp",
-	"register_types.cpp",
-	"voxel_chunks.cpp",
-	"voxel_materials.cpp",
-	"voxel_resources.cpp",
-	"voxel_save.cpp",
-	"voxel_stream.cpp",
-	"voxel_world.cpp",
+	"core/voxel_world.cpp",
+	"terrain/demo_terrain.cpp",
+	"terrain/level_terrain.cpp",
+	"terrain/terrain_resources.cpp",
 )]
 Return("sources", "src")

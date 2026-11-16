@@ -1,7 +1,7 @@
 // The VoxelWorld node's data, in one place. Everything the node schedules, caches or uploads lives here, so
 // voxel_world.h can stay a thin public API and the .cpp files can work on one state object.
 #pragma once
-#include "core/voxel_volume.h"
+#include "voxel_volume.h"
 
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/material.hpp>

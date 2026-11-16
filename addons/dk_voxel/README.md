@@ -120,7 +120,7 @@ inside the part without changing the shape, like Bananza's `VoxelMaterialChangeA
 
 `demo/levels/src/build_mini_level.py` builds the demo's `mini_level.blend` from script: a floating island,
 a peak with a tunnel and gold veins, a hollow tower, and a crater ringed by crystals. The format is
-documented in `src/level_terrain.h`. When exporting a game, add `*.dkvl` to the export preset's
+documented in `src/terrain/level_terrain.h`. When exporting a game, add `*.dkvl` to the export preset's
 non-resource include filter.
 
 ## Writing a generator for your game
@@ -145,10 +145,17 @@ replaces it).
 
    `dk_sources` are the addon's library `.cpp` files (`selftest.cpp` is a host-side test and is not in
    the list): they compile with your `env` and flags, and their objects land in
-   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h`,
-   `voxel_world.h` and `voxel_resources.h` live, `voxel_materials.h` holds `VoxelMaterialDef` and
-   `VoxelMaterialSet`, and the Godot-free core sits under `core/` (`core/voxel_generator.h`,
-   `core/voxel_volume.h`, `core/voxel_types.h`, `core/noise.h`). The addon's own entry point (`src/entry.cpp`, which
+   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, and headers are included by folder:
+   - `core/` is what every game reuses unchanged. The Godot node and its parts are `core/voxel_world.h`,
+     `core/voxel_resources.h` (`VoxelGenerator`, `VoxelViewer`), `core/voxel_materials.h`
+     (`VoxelMaterialDef`, `VoxelMaterialSet`) and `core/register_types.h`. The Godot-free engine is
+     `core/voxel_generator.h`, `core/voxel_volume.h`, `core/voxel_types.h` and `core/noise.h`, the only
+     files the host-side self-test compiles.
+   - `terrain/` holds the shipped generation profiles: `demo_terrain.*` (procedural), `level_terrain.*`
+     (Blender levels), and their resources in `terrain_resources.h`. Your own generators belong beside
+     them, or in your game's tree.
+
+   The addon's own entry point (`src/entry.cpp`, which
    defines `dk_voxel_library_init`) is deliberately not in the list: your game's library supplies its own
    entry symbol.
 
@@ -157,7 +164,7 @@ replaces it).
    settings and block origin — an unloaded chunk is regenerated exactly. A flat world, solid below y = 0:
 
    ```cpp
-   #include "voxel_resources.h"
+   #include "core/voxel_resources.h"
 
    struct Flat : dkv::Generator {
    	void generate_block(const int origin[3], float, dkv::Voxel out[512]) const override {
@@ -183,15 +190,16 @@ replaces it).
 
    Two things in the addon are there to be copied rather than inherited: `core/noise.h` gives you `hash3`,
    `noise3`, `fbm` and a `ColumnCache` keyed on the settings and the column origin, so a per-block heightmap
-   cache is correct no matter what order the engine fills blocks in; and `demo_terrain.cpp` shows a full
+   cache is correct no matter what order the engine fills blocks in; and `terrain/demo_terrain.cpp` shows a full
    generator written rule by rule — height, overhangs, caves, surface layers, ore — with every constant named
-   at the top of the file. Its material ids are `dkv::DemoMaterial` in `demo_terrain.h`, in the same order as
+   at the top of the file. Its material ids are `dkv::DemoMaterial` in `terrain/demo_terrain.h`, in the same order as
    the demo's `MATERIALS` array.
 
 4. Register the addon's classes and yours from your module initializer:
 
    ```cpp
-   #include "register_types.h"
+   #include "core/register_types.h"
+   #include "terrain/terrain_resources.h" // only if you use the shipped profiles
    #include <godot_cpp/godot.hpp>
 
    using namespace godot;
@@ -199,6 +207,7 @@ replaces it).
    static void init(ModuleInitializationLevel level) {
    	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
    	dk_voxel_register_types();
+   	dk_voxel_register_terrain(); // DemoTerrainGenerator, LevelTerrainGenerator
    	GDREGISTER_CLASS(FlatGenerator);
    }
    ```
