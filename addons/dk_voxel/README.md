@@ -49,7 +49,8 @@ Properties:
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
   (0 = cores − 2) and LOD/collision tuning.
 
-Changing `cell_size`, `bounds_size`, `generator` or `material_set` takes effect on the next `reset()`.
+Changing `cell_size`, `bounds_size` or `generator` takes effect on the next `reset()`; `material_set`
+applies immediately, to the hardness table and the shader uniforms.
 
 Every `VoxelViewer` registers with the `VoxelWorld` nodes that share its `World3D`; together they decide
 what is loaded, at which LOD, and with collision. With no viewer the active camera acts as one. In the
@@ -105,8 +106,9 @@ replaces it).
    env.SharedLibrary("bin/mygame", source=dk_sources + env.Glob("src/*.cpp"))
    ```
 
-   `dk_sources` are the addon's `.cpp` files: they compile with your `env` and flags, and their objects
-   land in `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h`,
+   `dk_sources` are the addon's library `.cpp` files (`selftest.cpp` is a host-side test and is not in
+   the list): they compile with your `env` and flags, and their objects land in
+   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h`,
    `voxel_core.h` and `voxel_resources.h` live. The addon's own entry point (`src/entry.cpp`, which
    defines `dk_voxel_library_init`) is deliberately not in the list: your game's library supplies its own
    entry symbol.

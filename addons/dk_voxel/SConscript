@@ -11,7 +11,13 @@
 # build tree. `dk_include` is the addon's `src/`, where the headers live (and where the game's
 # `#include "register_types.h"` resolves). The addon's own GDExtension entry symbol is `src/entry.cpp`,
 # which is deliberately left out: the game's library provides its own. The addon's own SConstruct adds it.
+# The SConscript also appends the addon's `-O3` to `env` (the mesher is the hot path even in a
+# template_debug build), so every source built with that `env`, the game's own included, is optimised.
 Import("env")
+
+# The mesher is the hot path: -O3 even in a template_debug build. Appended here rather than in the
+# addon's SConstruct so every caller gets it; being in `env`, it covers all sources built with it.
+env.Append(CXXFLAGS=["-O3"])
 
 here = Dir(".")
 src = here.Dir("src")
