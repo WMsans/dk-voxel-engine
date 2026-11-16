@@ -131,6 +131,32 @@ func _initialize() -> void:
 	check(not w2.dig_sphere(Vector3(2, 2, 2), 1.0, 0).changed, "unlisted material id inherits entry 0 hardness")
 	w2.free()
 
+	# The material set must reach the shader: 32 slots of colour and pattern parameters, entry 0 carrying
+	# the def's values. This is the only automated check that the uniforms are wired at all.
+	var shader: Shader = load("res://addons/dk_voxel/voxel_terrain.gdshader")
+	check(shader != null, "terrain shader loads")
+	var sm := ShaderMaterial.new()
+	sm.shader = shader
+	var shader_def := VoxelMaterialDef.new()
+	shader_def.color_a = Color(0.25, 0.5, 0.75)
+	shader_def.roughness = 0.42
+	var shader_set := VoxelMaterialSet.new()
+	var shader_defs: Array[VoxelMaterialDef] = [shader_def]
+	shader_set.materials = shader_defs
+	var mw := VoxelWorld.new()
+	mw.material = sm
+	mw.material_set = shader_set
+	var color_a: PackedColorArray = sm.get_shader_parameter("color_a")
+	var color_b: PackedColorArray = sm.get_shader_parameter("color_b")
+	var params: Array = sm.get_shader_parameter("params")
+	check(color_a.size() == 32 and color_b.size() == 32 and params.size() == 32,
+			"material uniforms fill 32 slots (color_a %d, color_b %d, params %d)" % [color_a.size(), color_b.size(), params.size()])
+	if color_a.size() == 32 and params.size() == 32:
+		var p0: Vector4 = params[0]
+		check(color_a[0].is_equal_approx(Color(0.25, 0.5, 0.75)) and is_equal_approx(p0.x, 0.3) and is_equal_approx(p0.y, 0.42),
+				"material set reaches the shader (color_a %s, params %s)" % [color_a[0], p0])
+	mw.free()
+
 	# Every changed edit announces the shape's global bounds.
 	var edits: Array = []
 	w.terrain_edited.connect(func(aabb: AABB, result: Dictionary) -> void: edits.append([aabb, result]))
@@ -510,6 +536,55 @@ func _initialize() -> void:
 	check(not back15.is_empty() and absf(back15.position.y - ground14) < 0.05, "short body falls back to generated terrain (y %.2f, was %.2f)" % [back15.get("position", Vector3.ZERO).y, ground14])
 	s15.free()
 	v15.free()
+
+	# A save failure during reset() must not throw edits away: they stay in the memory store and a later
+	# save() to a writable directory writes them. save_directory sits under a regular file, so every write
+	# fails (the error text is expected).
+	var blocker_path := "user://dkv_test_not_a_dir"
+	var blocker := FileAccess.open(blocker_path, FileAccess.WRITE)
+	check(blocker != null, "failed reset save: created the blocking file")
+	blocker.store_string("not a directory")
+	blocker = null
+	var failed_dir := "user://dkv_test_save_failed_reset"
+	rm_dir(failed_dir)
+	var s16 := VoxelWorld.new()
+	s16.cell_size = 0.5
+	var gen16 := DemoTerrainGenerator.new()
+	gen16.seed = 3
+	s16.generator = gen16
+	s16.save_directory = blocker_path.path_join("sub")
+	root.add_child(s16)
+	var v16 := VoxelViewer.new()
+	v16.position = Vector3(0, 40, 0)
+	root.add_child(v16)
+	check(await await_ready(s16, area), "failed reset save: endless area ready")
+	check(await await_idle(s16), "failed reset save: endless world settled")
+	var g16 := s16.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	var ground16: float = g16.position.y
+	check(s16.dig_sphere(g16.position, 3.0, 255).changed, "failed reset save: crater dug")
+	s16.reset() # the flush fails; the edit must survive in the store
+	s16.save_directory = failed_dir
+	check(s16.save() == OK, "failed reset save: a later save() succeeds")
+	s16.free()
+	v16.free()
+
+	var s17 := VoxelWorld.new()
+	s17.cell_size = 0.5
+	var gen17 := DemoTerrainGenerator.new()
+	gen17.seed = 3
+	s17.generator = gen17
+	s17.save_directory = failed_dir
+	root.add_child(s17)
+	var v17 := VoxelViewer.new()
+	v17.position = Vector3(0, 40, 0)
+	root.add_child(v17)
+	check(await await_ready(s17, area), "failed reset save: area ready in the new world")
+	var back17 := s17.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back17.is_empty() and back17.position.y < ground16 - 2.5, "failed reset save keeps the edit (y %.2f -> %.2f)" % [ground16, back17.get("position", Vector3.ZERO).y])
+	s17.free()
+	v17.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(blocker_path))
+	rm_dir(failed_dir)
 
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)

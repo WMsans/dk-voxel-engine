@@ -43,6 +43,7 @@ void VoxelWorld::ensure_volume() {
 	else
 		vol = std::make_unique<dkv::Volume>(cell_size);
 	active_generator = generator.is_valid() ? generator->create_generator() : nullptr;
+	generator_class = generator.is_valid() ? generator->get_class() : String(); // save headers must name this generator
 	chunks.clear();
 	chunk_lookup.clear();
 	if (bounded) {
@@ -59,7 +60,7 @@ void VoxelWorld::ensure_volume() {
 		if (!save_directory.is_empty()) { // bounded: a file from an earlier run replaces the generated chunk
 			std::vector<uint8_t> raw;
 			for (Chunk &c : chunks)
-				if (read_chunk_file(c.key, raw)) vol->deserialize_chunk(c.key.x, c.key.y, c.key.z, raw.data(), raw.size());
+				if (read_chunk_file(c.key, save_directory, generator_class, raw)) vol->deserialize_chunk(c.key.x, c.key.y, c.key.z, raw.data(), raw.size());
 		}
 		for (Chunk &c : chunks) c.version++;
 	}
@@ -189,7 +190,7 @@ void VoxelWorld::worker() {
 				PackedByteArray raw = r.job.stored.decompress((int)r.job.stored_size, FileAccess::COMPRESSION_ZSTD);
 				restored = raw.size() == (int64_t)r.job.stored_size && vol->deserialize_chunk(key.x, key.y, key.z, (const uint8_t *)raw.ptr(), (size_t)raw.size());
 			}
-			if (!restored && !save_directory.is_empty() && read_chunk_file(key, raw))
+			if (!restored && !r.job.save_dir.is_empty() && read_chunk_file(key, r.job.save_dir, r.job.gen_class, raw))
 				restored = vol->deserialize_chunk(key.x, key.y, key.z, raw.data(), raw.size());
 			if (!restored) vol->fill_chunk(key.x, key.y, key.z, active_generator.get());
 			r.has = true;
@@ -226,12 +227,12 @@ void VoxelWorld::free_chunk(Chunk &c, bool body_only /* = false */) {
 
 // Keep an edited chunk that is about to be unloaded: on disk when save_directory is set (the file is then
 // authoritative), otherwise compressed in memory until something generates it again.
-void VoxelWorld::store_chunk(const dkv::ChunkKey &key) {
+void VoxelWorld::store_chunk(const dkv::ChunkKey &key, bool try_disk /* = true */) {
 	if (!vol->is_modified(key.x, key.y, key.z)) return;
 	std::vector<uint8_t> raw = vol->serialize_chunk(key.x, key.y, key.z);
 	if (raw.empty()) return;
 	// ponytail: unload writes on the main thread; move to a writer thread if hitches show
-	if (!save_directory.is_empty() && write_chunk_file(key, raw.data(), raw.size())) { // on disk: the file is authoritative
+	if (try_disk && !save_directory.is_empty() && write_chunk_file(key, raw.data(), raw.size())) { // on disk: the file is authoritative
 		vol->clear_modified(key.x, key.y, key.z);
 		store.erase(key); // a stale store entry would shadow the file we just wrote
 		return;
@@ -243,12 +244,12 @@ void VoxelWorld::store_chunk(const dkv::ChunkKey &key) {
 	store[key] = {(uint32_t)raw.size(), data.compress(FileAccess::COMPRESSION_ZSTD)};
 }
 
-String VoxelWorld::chunk_file_path(const dkv::ChunkKey &key) const {
-	return save_directory.path_join(String::num_int64(key.x) + "_" + String::num_int64(key.y) + "_" + String::num_int64(key.z) + ".dkvc");
+String VoxelWorld::chunk_file_path(const dkv::ChunkKey &key, const String &dir) const {
+	return dir.path_join(String::num_int64(key.x) + "_" + String::num_int64(key.y) + "_" + String::num_int64(key.z) + ".dkvc");
 }
 
 bool VoxelWorld::write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size) {
-	const String path = chunk_file_path(key);
+	const String path = chunk_file_path(key, save_directory);
 	String abs = save_directory;
 	if (abs.begins_with("user://") || abs.begins_with("res://")) abs = ProjectSettings::get_singleton()->globalize_path(abs);
 	if (!DirAccess::dir_exists_absolute(abs)) {
@@ -282,12 +283,13 @@ bool VoxelWorld::write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data,
 
 // Reads a chunk's save file into `out`. False when there is no file, or when the header names another
 // format, cell size or generator (reported once with the path; the caller falls back to the generator).
-bool VoxelWorld::read_chunk_file(const dkv::ChunkKey &key, std::vector<uint8_t> &out) {
-	const String path = chunk_file_path(key);
+// `dir` and `gen_class` come from the caller: workers pass the snapshot taken when their job was queued.
+bool VoxelWorld::read_chunk_file(const dkv::ChunkKey &key, const String &dir, const String &gen_class, std::vector<uint8_t> &out) {
+	const String path = chunk_file_path(key, dir);
 	if (!FileAccess::file_exists(path)) return false;
 	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
 	if (f.is_null()) return false;
-	if (f->get_32() != DKVC_MAGIC || f->get_16() != DKVC_VERSION || f->get_float() != vol->cell || f->get_pascal_string() != generator_class) {
+	if (f->get_32() != DKVC_MAGIC || f->get_16() != DKVC_VERSION || f->get_float() != vol->cell || f->get_pascal_string() != gen_class) {
 		UtilityFunctions::push_error("VoxelWorld: save file header mismatch (format/cell size/generator): " + path);
 		return false;
 	}
@@ -375,6 +377,8 @@ void VoxelWorld::stream_endless() {
 						j.stored = sit->second.data;
 						j.stored_size = sit->second.raw_size;
 					}
+					j.save_dir = save_directory; // the worker reads these, so snapshot them under the queue lock
+					j.gen_class = generator_class;
 					gen.push_back(std::move(j));
 				}
 	}
@@ -389,7 +393,6 @@ void VoxelWorld::stream_endless() {
 // Pick each chunk's LOD from its distance to the nearest viewer and queue whatever is out of date.
 void VoxelWorld::scan() {
 	const float cs = dkv::CHUNK * vol->cell, hyst = cs * 0.5f;
-	auto lod_at = [&](float d) { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; };
 
 	if (!vol->bounded) stream_endless();
 
@@ -690,11 +693,16 @@ Error VoxelWorld::save() {
 void VoxelWorld::reset() {
 	generation++; // results still in flight belong to the world we are dropping
 	stop_workers();
-	save(); // flush what this world edited; never deletes files
+	if (save() == OK) {
+		store.clear(); // everything reached disk (or save_directory is empty, so there is nothing to keep)
+	} else { // do not discard edits a later save() could still write
+		UtilityFunctions::push_error("VoxelWorld: reset could not write every edited chunk; keeping them for a later save()");
+		for (const dkv::ChunkKey &key : vol->loaded_chunks())
+			if (vol->is_modified(key.x, key.y, key.z)) store_chunk(key, false); // the flush just failed: keep in memory
+	}
 	for (Chunk &c : chunks) free_chunk(c);
 	chunks.clear();
 	chunk_lookup.clear();
-	store.clear();
 	vol.reset();
 	active_viewers.clear();
 	ensure_volume();
@@ -771,7 +779,6 @@ bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
 		}
 	}
 	const float hyst = cs * 0.5f;
-	auto lod_at = [&](float d) { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; };
 	for (int z = cmin[2]; z <= cmax[2]; z++)
 		for (int y = cmin[1]; y <= cmax[1]; y++)
 			for (int x = cmin[0]; x <= cmax[0]; x++) {

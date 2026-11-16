@@ -54,6 +54,7 @@ class VoxelWorld : public Node3D {
 		dkv::ChunkKey key;
 		PackedByteArray stored;
 		uint32_t stored_size = 0;
+		String save_dir, gen_class; // snapshot at queue time: workers must not read the mutable members
 		float prio = 0;
 		int32_t index = -1;
 		int8_t lod = 0;
@@ -117,6 +118,8 @@ class VoxelWorld : public Node3D {
 	void apply_hardness();
 	void push_material_uniforms();
 	int thread_count() const { return threads > 0 ? threads : MAX(1, (int)std::thread::hardware_concurrency() - 2); }
+	// The wanted LOD for a distance, the one definition scan() and is_area_ready() share.
+	int lod_at(float d) const { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; }
 	void start_workers();
 	void stop_workers();
 
@@ -129,13 +132,16 @@ class VoxelWorld : public Node3D {
 	// Endless streaming: unload what no viewer wants (keeping edits in `store`), then queue generate
 	// jobs for the wanted set. Bounded worlds keep every chunk and never call this.
 	void stream_endless();
-	void store_chunk(const dkv::ChunkKey &key);
+	// Keeps an edited chunk that is about to be unloaded: on disk when save_directory is set, else (or when
+	// the write fails) compressed in `store`. `try_disk` is false when a write was just attempted and failed.
+	void store_chunk(const dkv::ChunkKey &key, bool try_disk = true);
 
-	// One zstd file per modified chunk: `<save_directory>/<x>_<y>_<z>.dkvc`. read_chunk_file() is false
-	// when there is no file or its header does not match this world (it pushes an error in that case).
-	String chunk_file_path(const dkv::ChunkKey &key) const;
-	bool write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size);
-	bool read_chunk_file(const dkv::ChunkKey &key, std::vector<uint8_t> &out);
+	// One zstd file per modified chunk: `<dir>/<x>_<y>_<z>.dkvc` (the directory is passed in: workers read a
+	// snapshot taken at queue time). read_chunk_file() is false when there is no file or its header does not
+	// match this world (it pushes an error in that case).
+	String chunk_file_path(const dkv::ChunkKey &key, const String &dir) const;
+	bool write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size); // main thread only
+	bool read_chunk_file(const dkv::ChunkKey &key, const String &dir, const String &gen_class, std::vector<uint8_t> &out);
 
 	// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
 	void scan();
