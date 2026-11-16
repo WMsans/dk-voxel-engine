@@ -47,6 +47,27 @@ protected:
 	static void _bind_methods();
 };
 
+// A hand-made level exported from Blender (tools/blender/dkv_export.py): a .dkvl file of voxelized parts.
+// Outside the level is air. Size a bounded VoxelWorld with get_level_size() to hold all of it.
+class LevelTerrainGenerator : public VoxelGenerator {
+	GDCLASS(LevelTerrainGenerator, VoxelGenerator)
+
+	String level_path;
+	mutable std::shared_ptr<const dkv::Generator> loaded; // the last load, for the size and spawn getters
+
+public:
+	// Reads the file again every time, so a re-export applies on the next VoxelWorld.reset().
+	std::shared_ptr<const dkv::Generator> create_generator() const override;
+
+	void set_level_path(const String &p) { level_path = p; loaded.reset(); }
+	String get_level_path() const { return level_path; }
+	Vector3 get_level_size() const;
+	Vector3 get_spawn_point() const;
+
+protected:
+	static void _bind_methods();
+};
+
 // Drives chunk streaming, LOD and collision for the VoxelWorld nodes sharing its World3D.
 class VoxelViewer : public Node3D {
 	GDCLASS(VoxelViewer, Node3D)

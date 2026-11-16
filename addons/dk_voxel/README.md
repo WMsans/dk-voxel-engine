@@ -40,7 +40,13 @@ Properties:
 - `cell_size` — metres per voxel, default 0.5.
 - `bounds_size` — the world in chunks from the origin. `Vector3i.ZERO` (the default) is endless: chunks
   stream in around the viewers and unload behind them.
-- `generator` — a `VoxelGenerator`; none means air. `DemoTerrainGenerator` has `seed` and `height`.
+- `generator` — a `VoxelGenerator`, the terrain generation profile; none means air. Two ship with the addon:
+  - `DemoTerrainGenerator` — procedural hills, caves and ore (`seed`, `height`); suits an endless world.
+  - `LevelTerrainGenerator` — a hand-made level from Blender (`level_path` to a `.dkvl`); see
+    [Hand-made levels](#hand-made-levels-from-blender). Size a bounded world from `get_level_size()`;
+    `get_spawn_point()` is the level's `Spawn` object.
+
+  Swap profiles by assigning another resource and calling `reset()` (the demo's P key does this).
 - `material_set` — a `VoxelMaterialSet`: one `VoxelMaterialDef` per material id, with `albedo` and `normal`
   textures, colour, pattern, roughness, metallic, emission and hardness. `albedo` and `normal` take ordinary
   image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
@@ -95,6 +101,27 @@ Edited chunks are written to `save_directory` when they unload and on `save()`; 
 them first. The file header holds the format version, `cell_size` and the generator's class name, and a
 mismatch is rejected with an error (the chunk falls back to the generator). Seed and other generator
 settings are not checked: give each world or seed its own directory. `reset()` never deletes files.
+
+## Hand-made levels from Blender
+
+Built the way Donkey Kong Bananza builds its stages: artist meshes are voxelized offline into
+signed-distance grids, one per part, and a level is an ordered list of operations on those parts. Paste
+adds a part and overwrites the material inside it. Erase carves the part out. Paint recolours solid voxels
+inside the part without changing the shape, like Bananza's `VoxelMaterialChangeArea`.
+
+1. Model the level in Blender, one closed mesh per part. Optional object custom properties: `dk_op`
+   (`paste` / `erase` / `paint`), `dk_priority` (lowest applies first; ties go by name), `dk_material`
+   (material id; otherwise the first material slot's `dk_material` property is used), and `dk_skip`. An
+   object named `Spawn` marks the start point.
+2. Export: `blender -b level.blend --python addons/dk_voxel/tools/blender/dkv_export.py -- level.dkvl --cell 0.5`.
+   Blender's Z-up axes become Godot's Y-up, and the level is shifted so it starts at the origin.
+3. In Godot: `LevelTerrainGenerator` with `level_path`, plus a bounded `VoxelWorld` of
+   `ceil(get_level_size() / (16 * cell_size))` chunks. The file is read again on every `reset()`.
+
+`demo/levels/src/build_mini_level.py` builds the demo's `mini_level.blend` from script: a floating island,
+a peak with a tunnel and gold veins, a hollow tower, and a crater ringed by crystals. The format is
+documented in `src/level_terrain.h`. When exporting a game, add `*.dkvl` to the export preset's
+non-resource include filter.
 
 ## Writing a generator for your game
 

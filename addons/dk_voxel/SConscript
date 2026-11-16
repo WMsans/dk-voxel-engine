@@ -34,6 +34,7 @@ sources = [obj.File(name) for name in (
 	"core/voxel_mesher.cpp",
 	"core/voxel_volume.cpp",
 	"demo_terrain.cpp",
+	"level_terrain.cpp",
 	"register_types.cpp",
 	"voxel_chunks.cpp",
 	"voxel_materials.cpp",

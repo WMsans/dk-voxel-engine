@@ -12,6 +12,7 @@ using namespace godot;
 void dk_voxel_register_types() {
 	GDREGISTER_ABSTRACT_CLASS(VoxelGenerator);
 	GDREGISTER_CLASS(DemoTerrainGenerator);
+	GDREGISTER_CLASS(LevelTerrainGenerator);
 	GDREGISTER_CLASS(VoxelMaterialDef);
 	GDREGISTER_CLASS(VoxelMaterialSet);
 	GDREGISTER_CLASS(VoxelViewer);

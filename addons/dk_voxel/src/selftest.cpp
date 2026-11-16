@@ -1,5 +1,6 @@
 // Core self-test: scons selftest && build/selftest
 #include "demo_terrain.h"
+#include "level_terrain.h"
 #include "core/noise.h"
 #include "core/voxel_generator.h"
 #include "core/voxel_volume.h"
@@ -283,6 +284,49 @@ int main() {
 				known &= m == 0 || (m >= GRASS && m <= CRYSTAL);
 			}
 		CHECK(known, "generated terrain uses only named materials");
+	}
+
+	printf("level profile (.dkvl)\n");
+	{
+		// A hollow ball: paste a sphere (r 6, rock), erase one inside it (r 3), repaint the top half gold.
+		std::vector<uint8_t> f;
+		auto put = [&](const void *p, size_t n) { f.insert(f.end(), (const uint8_t *)p, (const uint8_t *)p + n); };
+		auto sphere = [&](uint8_t mode, uint8_t mat, float r, float y0) {
+			const float c = 16, cell = 0.5f, org[3] = {c - 8, c - 8, c - 8};
+			const uint32_t n[3] = {33, 33, 33};
+			uint8_t hdr[4] = {mode, mat, 0, 0};
+			put(hdr, 4); put(org, 12); put(&cell, 4); put(n, 12);
+			for (uint32_t z = 0; z < 33; z++) for (uint32_t y = 0; y < 33; y++) for (uint32_t x = 0; x < 33; x++) {
+				Vec3 p(org[0] + x * cell, org[1] + y * cell, org[2] + z * cell);
+				float d = (p - Vec3(c, c, c)).len() - r;
+				if (y0 > 0) d = c - p.y; // the paint part: everything above the centre
+				f.push_back((uint8_t)(int8_t)std::clamp((int)std::lround(d / cell * LevelTerrain::SD_SCALE), -127, 127));
+			}
+		};
+		const float size[3] = {32, 32, 32}, spawn[3] = {16, 23, 16};
+		const uint32_t count = 3;
+		put("DKVL", 4); uint32_t ver = 1; put(&ver, 4); put(size, 12); put(spawn, 12); put(&count, 4);
+		sphere(LevelTerrain::PASTE, 3, 6, 0);
+		sphere(LevelTerrain::ERASE, 0, 3, 0);
+		sphere(LevelTerrain::PAINT, 5, 0, 1);
+
+		LevelTerrain g;
+		std::string err;
+		CHECK(g.load(f.data(), f.size(), err) && g.parts.size() == 3 && g.spawn[1] == 23, "load: %s", err.c_str());
+		LevelTerrain bad;
+		CHECK(!bad.load(f.data(), f.size() - 1, err), "truncated level accepted");
+		f.push_back(0);
+		CHECK(!bad.load(f.data(), f.size(), err), "trailing bytes accepted");
+
+		Volume v(4, 4, 4, 0.5f);
+		v.fill_all(&g, 4);
+		double want = 4.0 / 3.0 * PI * (216 - 27);
+		Soup a = mesh_all(v, lod0);
+		printf("  hollow ball: %ld tris, volume %.1f (exact %.1f)\n", a.tris, a.volume, want);
+		CHECK(a.open_edges == 0 && std::fabs(a.volume - want) < want * 0.03, "open %ld volume %.1f", a.open_edges, a.volume);
+		CHECK(v.get(32, 32, 32).d < 128 && v.get(32, 24, 32).d > 128, "erase did not hollow the ball");
+		CHECK(v.get(32, 40, 32).m == 5 && v.get(32, 24, 32).m == 3, "paint: top %d bottom %d", v.get(32, 40, 32).m, v.get(32, 24, 32).m);
+		CHECK(v.get(2, 2, 2).d == 0, "outside every part is air");
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

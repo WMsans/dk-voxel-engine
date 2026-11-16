@@ -688,5 +688,20 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(blocker_path))
 	rm_dir(failed_dir)
 
+	# The level profile: the Blender-made demo level, bounded and generated up front.
+	var lg := LevelTerrainGenerator.new()
+	lg.level_path = "res://demo/levels/mini_level.dkvl"
+	var size: Vector3 = lg.get_level_size()
+	check(size.x > 10.0 and size.y > 10.0, "level profile: size read from the file (%s)" % size)
+	var lw := VoxelWorld.new()
+	lw.cell_size = 0.5
+	lw.bounds_size = Vector3i((size / 8.0).ceil())
+	lw.generator = lg
+	var sp: Vector3 = lg.get_spawn_point()
+	var lhit := lw.raycast(Vector3(sp.x, size.y, sp.z), Vector3.DOWN, size.y)
+	check(not lhit.is_empty() and lhit.position.y < sp.y and lhit.material == 1, "level profile: grass under the spawn point (%s)" % lhit)
+	check(lw.get_density(Vector3(1, 1, 1)) < 1.0, "level profile: outside every part is air")
+	lw.free()
+
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)
