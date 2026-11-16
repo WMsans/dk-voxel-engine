@@ -1,11 +1,14 @@
 // Core self-test: scons selftest && build/selftest
+#include "demo_generator.h"
 #include "voxel_core.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <thread>
 #include <tuple>
 
 using namespace dkv;
@@ -16,6 +19,10 @@ static int failures = 0;
 	do { \
 		if (!(cond)) { failures++; printf("  FAIL %s:%d  %s  ", __FILE__, __LINE__, #cond); printf(__VA_ARGS__); printf("\n"); } \
 	} while (0)
+
+static double ms_since(std::chrono::steady_clock::time_point t0) {
+	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
 
 struct Soup {
 	long tris = 0, open_edges = 0, bad_normals = 0;
@@ -29,23 +36,28 @@ struct Soup {
 };
 
 // Meshes every chunk and checks the union is closed and consistently wound: every directed edge a->b
-// must be matched by b->a, across chunk borders and LOD changes.
-static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod) {
+// must be matched by b->a, across chunk borders and LOD changes. lo/hi are the chunk range to mesh
+// (exclusive max), defaulting to the volume's bounds. Mesh positions are chunk-relative, so they are
+// offset by the chunk origin before the checks.
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod);
+
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod, std::array<int, 3> lo, std::array<int, 3> hi) {
 	Soup s;
 	typedef std::tuple<float, float, float> P; // exact: seams must be bit-identical
 	std::map<std::pair<P, P>, int> edges;
 	MeshData m;
 	auto t0 = std::chrono::steady_clock::now();
-	for (int z = 0; z < v.cz; z++)
-		for (int y = 0; y < v.cy; y++)
-			for (int x = 0; x < v.cx; x++) {
+	for (int z = lo[2]; z < hi[2]; z++)
+		for (int y = lo[1]; y < hi[1]; y++)
+			for (int x = lo[0]; x < hi[0]; x++) {
 				if (!v.mesh_chunk(x, y, z, lod(x, y, z), m)) continue;
+				Vec3 origin = v.chunk_origin(x, y, z);
 				for (size_t i = 0; i < m.idx.size(); i += 3) {
 					Vec3 p[3], n[3];
 					P k[3];
 					for (int c = 0; c < 3; c++) {
 						int id = m.idx[i + c];
-						p[c] = Vec3(m.pos[id * 3], m.pos[id * 3 + 1], m.pos[id * 3 + 2]);
+						p[c] = Vec3(m.pos[id * 3], m.pos[id * 3 + 1], m.pos[id * 3 + 2]) + origin;
 						n[c] = Vec3(m.nrm[id * 3], m.nrm[id * 3 + 1], m.nrm[id * 3 + 2]);
 						k[c] = P(p[c].x, p[c].y, p[c].z);
 						s.pts.push_back(p[c]);
@@ -64,6 +76,10 @@ static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &l
 		if (it == edges.end() || it->second != e.second) s.open_edges++;
 	}
 	return s;
+}
+
+static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod) {
+	return mesh_all(v, lod, {v.bmin[0], v.bmin[1], v.bmin[2]}, {v.bmax[0], v.bmax[1], v.bmax[2]});
 }
 
 int main() {
@@ -122,19 +138,100 @@ int main() {
 		CHECK(d.open_edges == 0 && std::fabs(d.volume - want) < want * 0.01, "open %ld volume %.2f", d.open_edges, d.volume);
 	}
 
-	printf("terrain\n");
+	printf("endless sphere across the origin\n");
 	{
+		Volume v(0.5f);
+		for (int z = -2; z < 2; z++) for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) v.fill_chunk(x, y, z, nullptr);
+		v.edit(SPHERE, BUILD, {0.3f, -0.2f, 0.1f}, {7, 0, 0}, ID, 3, 0, 1, false);
+		double want = 4.0 / 3.0 * PI * 343;
+		Soup a = mesh_all(v, lod0, {-2, -2, -2}, {2, 2, 2}), b = mesh_all(v, mixed, {-2, -2, -2}, {2, 2, 2});
+		CHECK(a.open_edges == 0 && b.open_edges == 0, "open edges %ld %ld", a.open_edges, b.open_edges);
+		CHECK(std::fabs(a.volume - want) < want * 0.01, "volume %.1f", a.volume);
+	}
+
+	printf("generator\n");
+	{
+		DemoTerrain g; g.seed = 1234; g.height = 32.0f; // = 4 chunks * 16 * 0.5, today's terrain test
 		Volume v(8, 4, 8, 0.5f);
 		auto t0 = std::chrono::steady_clock::now();
-		v.generate(1234, 8);
-		double gen = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		v.fill_all(&g, 8);
+		double gen = ms_since(t0);
 		Soup a = mesh_all(v, lod0), b = mesh_all(v, mixed), c = mesh_all(v, [](int, int, int) { return 2; });
-		int n = v.cx * v.cy * v.cz;
+		int n = (v.bmax[0] - v.bmin[0]) * (v.bmax[1] - v.bmin[1]) * (v.bmax[2] - v.bmin[2]);
 		printf("  generate %.0f ms; %d chunks: lod0 %ld tris %.2f ms/chunk, mixed %ld, lod2 %ld tris %.2f ms/chunk\n", gen, n, a.tris, a.ms / n, b.tris, c.tris, c.ms / n);
 		CHECK(a.tris > 10000, "no terrain");
 		CHECK(a.open_edges == 0 && b.open_edges == 0 && c.open_edges == 0, "open edges %ld %ld %ld", a.open_edges, b.open_edges, c.open_edges);
 		CHECK(a.bad_normals < a.tris / 200, "flipped %ld of %ld", a.bad_normals, a.tris);
 		CHECK(std::fabs(c.volume - a.volume) < a.volume * 0.02, "lod2 changed the volume: %.0f vs %.0f", c.volume, a.volume);
+		CHECK(gen < 63 * 1.1 * 1.5, "generation slower than baseline: %.0f ms", gen); // generous for noise; print it
+
+		Volume e(0.5f);
+		e.fill_chunk(3, 1, -5, &g);
+		DemoTerrain low; low.seed = g.seed; low.height = 4.0f; // same seed and cell, different height
+		Volume r(0.5f); // reference for low: generated on a fresh thread, so its column cache is cold
+		std::thread([&] { r.fill_chunk(3, 1, -5, &low); }).join();
+		Volume lo(0.5f); lo.fill_chunk(3, 1, -5, &low); // this thread already cached g's columns
+		Volume f(0.5f); f.fill_chunk(3, 1, -5, &g);
+		bool same = true, stable = true;
+		for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) {
+			same &= e.get(48 + x, 16 + y, -80 + z) == f.get(48 + x, 16 + y, -80 + z);
+			stable &= r.get(48 + x, 16 + y, -80 + z) == lo.get(48 + x, 16 + y, -80 + z);
+		}
+		CHECK(same, "generation not deterministic");
+		CHECK(stable, "column cache ignored height: settings are part of the cache key");
+	}
+
+	printf("serialise\n");
+	{
+		Volume v(0.5f);
+		for (int z = -1; z <= 1; z++) for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) v.fill_chunk(x, y, z, nullptr);
+		v.edit(BOX, BUILD, {1.1f, 2.2f, 0.3f}, {3, 2, 2.5f}, ID, 7, 0, 1, true); // sharp: Hermite present
+		CHECK(v.is_modified(0, 0, 0), "edit did not mark the chunk");
+		MeshData before; v.mesh_chunk(0, 0, 0, 0, before);
+		auto bytes = v.serialize_chunk(0, 0, 0);
+		v.remove_chunk(0, 0, 0);
+		CHECK(!v.has_chunk(0, 0, 0) && !v.neighbors_ready(0, 0, 0), "remove");
+		CHECK(v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size()) && !v.is_modified(0, 0, 0), "restore");
+		MeshData after; v.mesh_chunk(0, 0, 0, 0, after);
+		CHECK(before.pos == after.pos && before.idx == after.idx, "round trip changed the mesh");
+		CHECK(!v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size() - 1), "truncated data accepted");
+	}
+	printf("edit clips at unloaded chunks\n");
+	{
+		Volume v(0.5f);
+		v.fill_chunk(0, 0, 0, nullptr);                                   // only one chunk loaded
+		EditResult r = v.edit(SPHERE, BUILD, {8, 4, 4}, {6, 0, 0}, ID, 3, 0, 1, false); // reaches into x = 1
+		CHECK(r.changed && v.chunk_count() == 1 && !v.has_chunk(1, 0, 0), "edit created a chunk");
+		EditResult e = v.edit(SPHERE, ERASE, {8, 4, 4}, {6, 0, 0}, ID, 0, 0, 1, false);
+		double m3 = 0; for (float f : e.removed) m3 += f * 0.125;  // removed is in voxels; 0.5^3 m3 each
+		CHECK(m3 > 50 && m3 < 0.5 * 4.0 / 3.0 * 3.14159 * 216, "removed %.0f m3: should be only the part inside chunk 0 (< half sphere)", m3);
+	}
+
+	printf("concurrent fill and query\n");
+	{
+		// Workers insert chunks under the unique lock while the main thread reads the map. Without the
+		// shared_lock in get()/density()/raycast() this is a data race on the chunk map (a rehash under a
+		// reader), so it is a smoke test for the locking, not a proof of it: build with -fsanitize=thread.
+		Volume v(0.5f);
+		const int N = 256; // 8 x 8 x 4 chunks, all distinct
+		std::atomic<int> next{0};
+		auto writer = [&] {
+			for (;;) {
+				int i = next.fetch_add(1);
+				if (i >= N) return;
+				v.fill_chunk(i % 8 - 4, (i / 8) % 8 - 4, (i / 64) % 4 - 2, nullptr);
+			}
+		};
+		std::vector<std::thread> pool;
+		for (int t = 0; t < 4; t++) pool.emplace_back(writer);
+		for (int i = 0; i < 200000; i++) { // read the map while it grows
+			v.get(i % 64 - 32, i / 64 % 16 - 8, i / 1024 % 64 - 32);
+			if ((i & 4095) == 0) { v.density({0, 0, 0}); v.raycast({0, 100, 0}, {0, -1, 0}, 200); }
+		}
+		for (auto &t : pool) t.join();
+		bool all = v.chunk_count() == (size_t)N;
+		for (int i = 0; i < N; i++) all &= v.has_chunk(i % 8 - 4, (i / 8) % 8 - 4, (i / 64) % 4 - 2);
+		CHECK(all, "concurrent fill lost chunks: %zu", v.chunk_count());
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

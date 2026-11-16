@@ -5,9 +5,9 @@
 shader_type spatial;
 
 uniform sampler3D noise_tex : repeat_enable, filter_linear_mipmap;
-uniform vec3 color_a[16] : source_color;
-uniform vec3 color_b[16] : source_color;
-uniform vec4 params[16]; // x = pattern scale (1/m), y = roughness, z = metallic, w = emission
+uniform vec3 color_a[32] : source_color;
+uniform vec3 color_b[32] : source_color;
+uniform vec4 params[32]; // x = pattern scale (1/m), y = roughness, z = metallic, w = emission
 uniform float bump = 0.12;
 uniform float rim = 0.35;
 
@@ -30,8 +30,8 @@ vec4 surface(int id, vec3 p) {
 }
 
 void fragment() {
-	int ia = int(COLOR.r * 255.0 + 0.5) & 15;
-	int ib = int(COLOR.g * 255.0 + 0.5) & 15;
+	int ia = int(COLOR.r * 255.0 + 0.5) & 31;
+	int ib = int(COLOR.g * 255.0 + 0.5) & 31;
 	vec4 a = surface(ia, vpos);
 	vec4 b = ia == ib ? a : surface(ib, vpos);
 	// Height blend: the taller material wins near the transition, giving a ragged, natural border.
