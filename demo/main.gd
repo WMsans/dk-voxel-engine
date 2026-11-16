@@ -17,8 +17,8 @@ const MATERIALS := [ # name, colour a, colour b, pattern scale, roughness, metal
 	["Crystal", Color(0.08, 0.60, 0.80), Color(0.60, 0.28, 0.85), 0.2, 0.15, 0.3, 1.2, 2],
 ]
 const BUILD_KEYS := [7, 2, 3, 4, 8]
-const WORLD_CHUNKS := Vector3i(32, 8, 32)
 const CELL := 0.5
+const GROUND_FROM := 400.0 # raycast down from here to find the ground: endless worlds have no height
 
 var world: VoxelWorld
 var generator := DemoTerrainGenerator.new()
@@ -46,7 +46,7 @@ func _ready() -> void:
 	_make_environment()
 	materials = _make_material_set()
 	world = VoxelWorld.new()
-	world.bounds_size = WORLD_CHUNKS
+	world.bounds_size = Vector3i.ZERO # endless: chunks stream around the player's viewer
 	world.cell_size = CELL
 	world.generator = generator
 	world.material_set = materials
@@ -62,11 +62,27 @@ func _ready() -> void:
 func _new_world(world_seed: int) -> void:
 	generator.seed = world_seed
 	world.reset()
-	var size := world.get_world_size()
-	_build_ruins(Vector3(size.x * 0.5 + 14.0, 0, size.z * 0.5 - 6.0))
-	player.position = _ground(Vector3(size.x * 0.5, 0, size.z * 0.5)) + Vector3.UP * 3.0
-	player.velocity = Vector3.ZERO
 	spawned = false
+	_spawn()
+
+
+## Puts the player on the ground at the origin, then builds the ruins, once the area is streamed in.
+func _spawn() -> void:
+	var at := Vector3.ZERO
+	await _wait_ready(AABB(at + Vector3(-32, 0, -32), Vector3(64, 64, 64)), false) # ground and ruins
+	player.position = _ground(at) + Vector3.UP * 3.0
+	player.velocity = Vector3.ZERO
+	_build_ruins(at + Vector3(14.0, 0, -6.0))
+	await _wait_ready(AABB(player.position + Vector3(-8, -2, -8), Vector3(16, 12, 16)), true) # under the player
+	spawned = true
+
+
+## Waits (bounded, so a stalled stream cannot hang the demo) until the chunks under `aabb` are meshed.
+func _wait_ready(aabb: AABB, need_collision: bool, frames := 600) -> void:
+	for i in frames:
+		if world.is_area_ready(aabb, need_collision):
+			return
+		await get_tree().process_frame
 
 
 func _make_material_set() -> VoxelMaterialSet:
@@ -110,7 +126,7 @@ func _build_ruins(at: Vector3) -> void:
 
 
 func _ground(at: Vector3) -> Vector3:
-	var hit := world.raycast(Vector3(at.x, world.get_world_size().y - 1.0, at.z), Vector3.DOWN, 200.0)
+	var hit := world.raycast(Vector3(at.x, GROUND_FROM, at.z), Vector3.DOWN, GROUND_FROM + 200.0)
 	return hit.get("position", Vector3(at.x, 20.0, at.z))
 
 
@@ -194,6 +210,9 @@ func _make_player() -> void:
 	lamp.light_energy = 0.7
 	lamp.light_color = Color(1.0, 0.85, 0.65)
 	cam.add_child(lamp)
+	var vv := VoxelViewer.new() # streams and collides around the player, not around the camera
+	vv.position = Vector3(0, 0.9, 0)
+	player.add_child(vv)
 	add_child(player)
 	cam.make_current()
 
@@ -240,7 +259,6 @@ func _unhandled_input(e: InputEvent) -> void:
 func _physics_process(dt: float) -> void:
 	# Hold the player until the ground under them has a collision body.
 	if not spawned:
-		spawned = world.get_stats().bodies > 0 and world.get_pending_count() < 400
 		return
 	var dir := Input.get_vector(&"ui_left", &"ui_right", &"ui_up", &"ui_down")
 	dir += Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
@@ -282,8 +300,8 @@ func _physics_process(dt: float) -> void:
 
 func _process(_dt: float) -> void:
 	var s := world.get_stats()
-	hud.text = "%d fps   %.2fM tris   %d chunk meshes   %d colliders   %d queued   %.2f ms/chunk on %d threads\nbrush %.1f m   build: %s   gold: %.1f m³%s\nLMB dig  RMB build  Q smooth  E block  F bomb  wheel size  1-5 material  V fly  R new world" % [
-		Engine.get_frames_per_second(), s.triangles / 1e6, s.meshes, s.bodies, s.pending, s.mesh_ms, s.threads,
+	hud.text = "%d fps   %.2fM tris   %d chunk meshes   %d colliders   %d chunks   %d queued   %.2f ms/chunk on %d threads\nbrush %.1f m   build: %s   gold: %.1f m³%s\nLMB dig  RMB build  Q smooth  E block  F bomb  wheel size  1-5 material  V fly  R new world" % [
+		Engine.get_frames_per_second(), s.triangles / 1e6, s.meshes, s.bodies, s.chunks, s.pending, s.mesh_ms, s.threads,
 		brush, _material(build_mat).name, gold, "   [FLY]" if fly else ""]
 	if shot_path != "" and spawned and s.pending == 0 and Engine.get_process_frames() > 60:
 		_beauty_shot()
@@ -394,25 +412,26 @@ func _throw_bomb() -> void:
 func _beauty_shot() -> void:
 	set_process(false)
 	fly = true
-	var size := world.get_world_size()
-	var tower := _ground(Vector3(size.x * 0.5 + 14.0, 0, size.z * 0.5 - 6.0))
+	var tower := _ground(Vector3(14.0, 0, -6.0))
 	world.dig_sphere(tower + Vector3(-9, 0.5, 6), 3.2, 2)
 	world.dig_sphere(tower + Vector3(-12, -1.5, 3), 2.6, 2)
 	world.build_sphere(tower + Vector3(-5, 1.0, 12), 1.8, 8)
-	var crater := _ground(Vector3(size.x * 0.5 - 30.0, 0, size.z * 0.5 + 20.0))
+	var crater := _ground(Vector3(-30.0, 0, 20.0))
 	for i in 4:
 		world.dig_sphere(crater + Vector3(i * 2.5, -1.0 - i * 2.2, 0), 5.0, 2)
 	var views := [
 		[tower + Vector3(-20, 14, 30), tower + Vector3(-6, 3, 2)],
-		[Vector3(size.x * 0.5 - 70.0, size.y * 0.95, size.z * 0.5 + 85.0), Vector3(size.x * 0.5, size.y * 0.3, size.z * 0.5)],
+		[Vector3(-70.0, 60.0, 85.0), Vector3(0, 20, 0)],
 		[crater + Vector3(-9, 5, 7), crater + Vector3(4, -5, 0)],
 	]
 	for i in views.size():
 		player.global_position = views[i][0] - cam.position
 		cam.look_at(views[i][1])
 		await get_tree().create_timer(0.3).timeout
-		while world.get_pending_count() > 0:
+		var quiet := 0
+		while quiet < 3: # let the stream around the new viewpoint settle
 			await get_tree().process_frame
+			quiet = quiet + 1 if world.get_pending_count() == 0 else 0
 		var t0 := Time.get_ticks_usec()
 		for f in 100:
 			await get_tree().process_frame

@@ -237,6 +237,11 @@ uint8_t *Volume::hermite_at(int x, int y, int z, bool create) {
 }
 
 Voxel Volume::get(int x, int y, int z) const {
+	std::shared_lock lk(mtx);
+	return get_unlocked(x, y, z);
+}
+
+Voxel Volume::get_unlocked(int x, int y, int z) const {
 	if (!in_world(x, y, z)) return {};
 	const Chunk *c = chunk_at(x >> 4, y >> 4, z >> 4);
 	if (!c) return {};
@@ -283,15 +288,15 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 		old.resize(chg.size());
 		for (int z = lo[2]; z <= hi[2]; z++)
 			for (int y = lo[1]; y <= hi[1]; y++)
-				for (int x = lo[0]; x <= hi[0]; x++) old[ri(x, y, z)] = get(x, y, z).d;
+				for (int x = lo[0]; x <= hi[0]; x++) old[ri(x, y, z)] = get_unlocked(x, y, z).d;
 	}
-	auto old_d = [&](int x, int y, int z) -> float { return in_region(x, y, z) ? old[ri(x, y, z)] : get(x, y, z).d; };
+	auto old_d = [&](int x, int y, int z) -> float { return in_region(x, y, z) ? old[ri(x, y, z)] : get_unlocked(x, y, z).d; };
 	for (int z = lo[2]; z <= hi[2]; z++)
 		for (int y = lo[1]; y <= hi[1]; y++)
 			for (int x = lo[0]; x <= hi[0]; x++) {
 				float sd = sdf(Vec3(x * cell, y * cell, z * cell)) / cell;
 				if (sd > 1.0f) continue;
-				Voxel v = get(x, y, z), nv = v;
+				Voxel v = get_unlocked(x, y, z), nv = v;
 				uint8_t sh = sdf_to_density(sd);
 				if (mode == BUILD) {
 					if (sh > v.d) nv = {sh, v.d < 128 ? material : v.m};
@@ -323,7 +328,7 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 					e[a]++;
 					if (!(chg[ri(x, y, z)] || (in_region(e[0], e[1], e[2]) && chg[ri(e[0], e[1], e[2])]))) continue;
 					uint8_t *hd = hermite_at(x, y, z, false);
-					bool fa = get(x, y, z).d >= 128, fb = get(e[0], e[1], e[2]).d >= 128;
+					bool fa = get_unlocked(x, y, z).d >= 128, fb = get_unlocked(e[0], e[1], e[2]).d >= 128;
 					Vec3 pa(x * cell, y * cell, z * cell), pb(e[0] * cell, e[1] * cell, e[2] * cell);
 					float sa = 0, sb = 0;
 					bool ok = sharp && mode != SMOOTH && fa != fb;
@@ -368,34 +373,44 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 // ---------------------------------------------------------------------------------------------
 
 float Volume::density(Vec3 p) const {
+	std::shared_lock lk(mtx);
+	return density_unlocked(p);
+}
+
+float Volume::density_unlocked(Vec3 p) const {
 	float gx = p.x / cell, gy = p.y / cell, gz = p.z / cell;
 	int x = (int)std::floor(gx), y = (int)std::floor(gy), z = (int)std::floor(gz);
 	float fx = gx - x, fy = gy - y, fz = gz - z, sum = 0;
-	for (int c = 0; c < 8; c++) sum += (c & 1 ? fx : 1 - fx) * (c & 2 ? fy : 1 - fy) * (c & 4 ? fz : 1 - fz) * get(x + (c & 1), y + ((c >> 1) & 1), z + (c >> 2)).d;
+	for (int c = 0; c < 8; c++) sum += (c & 1 ? fx : 1 - fx) * (c & 2 ? fy : 1 - fy) * (c & 4 ? fz : 1 - fz) * get_unlocked(x + (c & 1), y + ((c >> 1) & 1), z + (c >> 2)).d;
 	return sum;
 }
 
 RayHit Volume::raycast(Vec3 o, Vec3 dir, float max_dist) const {
+	std::shared_lock lk(mtx);
+	return raycast_unlocked(o, dir, max_dist);
+}
+
+RayHit Volume::raycast_unlocked(Vec3 o, Vec3 dir, float max_dist) const {
 	RayHit r;
 	dir = dir.norm();
 	const float step = cell * 0.5f;
 	float prev = 0;
 	for (float t = 0; t <= max_dist; prev = t, t += step) {
-		if (density(o + dir * t) < 127.5f) continue;
+		if (density_unlocked(o + dir * t) < 127.5f) continue;
 		float a = prev, b = t;
 		for (int i = 0; i < 8; i++) {
 			float m = (a + b) * 0.5f;
-			(density(o + dir * m) < 127.5f ? a : b) = m;
+			(density_unlocked(o + dir * m) < 127.5f ? a : b) = m;
 		}
 		r.hit = true;
 		r.pos = o + dir * b;
 		float e = cell * 0.5f;
-		Vec3 g(density(r.pos + Vec3(e, 0, 0)) - density(r.pos - Vec3(e, 0, 0)), density(r.pos + Vec3(0, e, 0)) - density(r.pos - Vec3(0, e, 0)), density(r.pos + Vec3(0, 0, e)) - density(r.pos - Vec3(0, 0, e)));
+		Vec3 g(density_unlocked(r.pos + Vec3(e, 0, 0)) - density_unlocked(r.pos - Vec3(e, 0, 0)), density_unlocked(r.pos + Vec3(0, e, 0)) - density_unlocked(r.pos - Vec3(0, e, 0)), density_unlocked(r.pos + Vec3(0, 0, e)) - density_unlocked(r.pos - Vec3(0, 0, e)));
 		r.normal = g.dot(g) > 1e-6f ? g.norm() * -1.0f : dir * -1.0f;
 		int x = (int)std::floor(r.pos.x / cell), y = (int)std::floor(r.pos.y / cell), z = (int)std::floor(r.pos.z / cell);
 		Voxel best;
 		for (int c = 0; c < 8; c++) {
-			Voxel v = get(x + (c & 1), y + ((c >> 1) & 1), z + (c >> 2));
+			Voxel v = get_unlocked(x + (c & 1), y + ((c >> 1) & 1), z + (c >> 2));
 			if (v.d >= best.d) best = v;
 		}
 		r.material = best.m;

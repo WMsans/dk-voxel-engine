@@ -142,14 +142,21 @@ public:
 	bool mesh_chunk(int x, int y, int z, int lod, MeshData &out) const;
 
 	Vec3 chunk_origin(int cx, int cy, int cz) const; // metres: (c * CHUNK) * cell
-	RayHit raycast(Vec3 origin, Vec3 dir, float max_dist) const;
-	float density(Vec3 p) const; // trilinear, 0..255
-	Voxel get(int x, int y, int z) const; // missing chunk or outside bounds = air
+	RayHit raycast(Vec3 origin, Vec3 dir, float max_dist) const; // locks mtx for the whole march
+	float density(Vec3 p) const; // trilinear, 0..255, locks mtx
+	Voxel get(int x, int y, int z) const; // missing chunk or outside bounds = air, locked against fill_chunk
 
 private:
 	struct Chunk; // defined in volume.cpp
 	std::unordered_map<ChunkKey, std::unique_ptr<Chunk>, ChunkKeyHash> chunks;
 	mutable std::shared_mutex mtx; // ponytail: one global lock; per-chunk locks if workers contend.
+
+	// The unlocked queries: the caller holds mtx (shared or unique), so a traversal of many voxels
+	// locks once instead of per voxel. Workers insert under the unique lock, so nothing may read the
+	// chunk map without it.
+	Voxel get_unlocked(int x, int y, int z) const;
+	float density_unlocked(Vec3 p) const;
+	RayHit raycast_unlocked(Vec3 origin, Vec3 dir, float max_dist) const;
 
 	// Callers must hold mtx. Null when the chunk is missing.
 	Chunk *chunk_at(int cx, int cy, int cz);

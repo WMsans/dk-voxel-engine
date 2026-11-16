@@ -2,6 +2,7 @@
 #include "demo_generator.h"
 #include "voxel_core.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -204,6 +205,33 @@ int main() {
 		EditResult e = v.edit(SPHERE, ERASE, {8, 4, 4}, {6, 0, 0}, ID, 0, 0, 1, false);
 		double m3 = 0; for (float f : e.removed) m3 += f * 0.125;  // removed is in voxels; 0.5^3 m3 each
 		CHECK(m3 > 50 && m3 < 0.5 * 4.0 / 3.0 * 3.14159 * 216, "removed %.0f m3: should be only the part inside chunk 0 (< half sphere)", m3);
+	}
+
+	printf("concurrent fill and query\n");
+	{
+		// Workers insert chunks under the unique lock while the main thread reads the map. Without the
+		// shared_lock in get()/density()/raycast() this is a data race on the chunk map (a rehash under a
+		// reader), so it is a smoke test for the locking, not a proof of it: build with -fsanitize=thread.
+		Volume v(0.5f);
+		const int N = 256; // 8 x 8 x 4 chunks, all distinct
+		std::atomic<int> next{0};
+		auto writer = [&] {
+			for (;;) {
+				int i = next.fetch_add(1);
+				if (i >= N) return;
+				v.fill_chunk(i % 8 - 4, (i / 8) % 8 - 4, (i / 64) % 4 - 2, nullptr);
+			}
+		};
+		std::vector<std::thread> pool;
+		for (int t = 0; t < 4; t++) pool.emplace_back(writer);
+		for (int i = 0; i < 200000; i++) { // read the map while it grows
+			v.get(i % 64 - 32, i / 64 % 16 - 8, i / 1024 % 64 - 32);
+			if ((i & 4095) == 0) { v.density({0, 0, 0}); v.raycast({0, 100, 0}, {0, -1, 0}, 200); }
+		}
+		for (auto &t : pool) t.join();
+		bool all = v.chunk_count() == (size_t)N;
+		for (int i = 0; i < N; i++) all &= v.has_chunk(i % 8 - 4, (i / 8) % 8 - 4, (i / 64) % 4 - 2);
+		CHECK(all, "concurrent fill lost chunks: %zu", v.chunk_count());
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

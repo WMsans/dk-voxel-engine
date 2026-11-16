@@ -4,8 +4,10 @@
 
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/physics_server3d.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
@@ -32,20 +34,76 @@ void VoxelWorld::ensure_volume() {
 		vol = std::make_unique<dkv::Volume>(bounds_size.x, bounds_size.y, bounds_size.z, cell_size);
 	else
 		vol = std::make_unique<dkv::Volume>(cell_size);
-	chunks.assign((size_t)vol->chunk_count(), Chunk());
-	for (int z = 0; z < ncz(); z++)
-		for (int y = 0; y < ncy(); y++)
-			for (int x = 0; x < ncx(); x++) {
-				dkv::Vec3 o = vol->chunk_origin(x, y, z);
-				chunks[chunk_index(x, y, z)].offset = Vector3(o.x, o.y, o.z);
-			}
-	apply_hardness();
+	active_generator = generator.is_valid() ? generator->create_generator() : nullptr;
+	chunks.clear();
+	chunk_lookup.clear();
 	if (bounded) {
-		std::shared_ptr<const dkv::Generator> gen = generator.is_valid() ? generator->create_generator() : nullptr;
-		vol->fill_all(gen.get(), thread_count());
+		chunks.assign((size_t)vol->chunk_count(), Chunk());
+		for (int z = 0; z < ncz(); z++)
+			for (int y = 0; y < ncy(); y++)
+				for (int x = 0; x < ncx(); x++) {
+					int idx = chunk_index(x, y, z);
+					dkv::Vec3 o = vol->chunk_origin(x, y, z);
+					chunks[idx].key = dkv::ChunkKey(x, y, z);
+					chunks[idx].offset = Vector3(o.x, o.y, o.z);
+				}
+		vol->fill_all(active_generator.get(), thread_count());
 		for (Chunk &c : chunks) c.version++;
 	}
+	apply_hardness();
 	need_scan = true;
+}
+
+// The chunk list entry for a chunk coordinate, or null when it is not loaded (endless) or out of bounds.
+VoxelWorld::Chunk *VoxelWorld::find_chunk(int cx, int cy, int cz) {
+	if (!vol) return nullptr;
+	if (vol->bounded) return vol->in_bounds(cx, cy, cz) ? &chunks[chunk_index(cx, cy, cz)] : nullptr;
+	auto it = chunk_lookup.find(dkv::ChunkKey(cx, cy, cz));
+	return it == chunk_lookup.end() ? nullptr : &chunks[it->second];
+}
+
+// Viewers sharing our World3D drive LOD, collision and streaming. Without one, the active camera does,
+// with the world's own collision distance and a view distance that reaches the last LOD band.
+void VoxelWorld::update_viewers() {
+	const float cs = dkv::CHUNK * vol->cell;
+	std::vector<Viewer> found;
+	if (is_inside_tree() && get_tree()) {
+		TypedArray<Node> group = get_tree()->get_nodes_in_group(VIEWER_GROUP);
+		for (int i = 0; i < group.size(); i++) {
+			VoxelViewer *vv = Object::cast_to<VoxelViewer>(group[i]);
+			if (!vv || !vv->is_inside_tree() || !vv->get_enabled() || vv->get_world_3d() != get_world_3d()) continue;
+			Viewer v;
+			v.pos = to_local(vv->get_global_position());
+			v.chunk = Vector3i((v.pos / cs).floor());
+			v.view_distance = vv->get_view_distance();
+			v.vertical_view_distance = vv->get_vertical_view_distance();
+			v.collision_distance = vv->get_collision_distance();
+			found.push_back(v);
+		}
+	}
+	if (found.empty() && is_inside_tree() && get_viewport())
+		if (Camera3D *cam = get_viewport()->get_camera_3d()) {
+			Viewer v;
+			v.pos = to_local(cam->get_global_position());
+			v.chunk = Vector3i((v.pos / cs).floor());
+			v.view_distance = lod2_distance + cs;
+			v.vertical_view_distance = lod2_distance + cs;
+			v.collision_distance = collision_distance;
+			found.push_back(v);
+		}
+	bool changed = found.size() != active_viewers.size();
+	for (size_t i = 0; i < found.size() && i < active_viewers.size(); i++)
+		if (found[i].chunk != active_viewers[i].chunk || found[i].view_distance != active_viewers[i].view_distance ||
+				found[i].vertical_view_distance != active_viewers[i].vertical_view_distance ||
+				found[i].collision_distance != active_viewers[i].collision_distance ||
+				found[i].pos.distance_squared_to(active_viewers[i].pos) > 4.0f) // 2 m of slack, so LOD and collision follow
+			changed = true;
+	if (changed) {
+		active_viewers = std::move(found);
+		need_scan = true;
+	} else {
+		for (size_t i = 0; i < found.size(); i++) active_viewers[i].pos = found[i].pos;
+	}
 }
 
 Ref<VoxelMaterialDef> VoxelWorld::material_def(int id) const {
@@ -109,10 +167,19 @@ void VoxelWorld::worker() {
 			r.job = jobs.top();
 			jobs.pop();
 		}
-		int x, y, z;
-		chunk_coord(r.job.index, x, y, z);
 		auto t0 = std::chrono::steady_clock::now();
-		r.has = vol->mesh_chunk(x, y, z, r.job.lod, r.mesh);
+		const dkv::ChunkKey &key = r.job.key;
+		if (r.job.is_gen) { // endless: put back the edited chunk we kept in memory, else generate it
+			bool restored = false;
+			if (!r.job.stored.is_empty()) {
+				PackedByteArray raw = r.job.stored.decompress((int)r.job.stored_size, FileAccess::COMPRESSION_ZSTD);
+				restored = raw.size() == (int64_t)r.job.stored_size && vol->deserialize_chunk(key.x, key.y, key.z, (const uint8_t *)raw.ptr(), (size_t)raw.size());
+			}
+			if (!restored) vol->fill_chunk(key.x, key.y, key.z, active_generator.get());
+			r.has = true;
+		} else {
+			r.has = vol->mesh_chunk(key.x, key.y, key.z, r.job.lod, r.mesh);
+		}
 		r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		std::lock_guard lk(qm);
 		results.push_back(std::move(r));
@@ -141,19 +208,136 @@ void VoxelWorld::free_chunk(Chunk &c, bool body_only /* = false */) {
 	c.lod = -1;
 }
 
-// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
+// Keep an edited chunk that is about to be unloaded: compressed in memory (Task 6 writes it to disk).
+void VoxelWorld::store_chunk(const dkv::ChunkKey &key) {
+	if (!vol->is_modified(key.x, key.y, key.z)) return;
+	std::vector<uint8_t> raw = vol->serialize_chunk(key.x, key.y, key.z);
+	if (raw.empty()) return;
+	PackedByteArray data;
+	data.resize((int64_t)raw.size());
+	memcpy(data.ptrw(), raw.data(), raw.size());
+	store[key] = {(uint32_t)raw.size(), data.compress(FileAccess::COMPRESSION_ZSTD)};
+}
+
+// Endless streaming: unload what no viewer wants, then queue a generate job for every wanted chunk that
+// is not loaded. The extra chunk of margin is loaded so the chunks viewers see have all 26 neighbours.
+void VoxelWorld::stream_endless() {
+	const float cs = dkv::CHUNK * vol->cell;
+	const float margin = cs;
+	std::vector<Job> gen;
+
+	for (int i = (int)chunks.size() - 1; i >= 0; i--) {
+		Chunk &c = chunks[i];
+		if (c.gen_queued) continue; // its generate job is still queued; the next scan drops it
+		Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
+		bool wanted = false;
+		for (const Viewer &v : active_viewers) {
+			float dx = center.x - v.pos.x, dz = center.z - v.pos.z, dy = std::fabs(center.y - v.pos.y);
+			float rh = v.view_distance + margin, rv = v.vertical_view_distance + margin;
+			if (dx * dx + dz * dz <= rh * rh && dy <= rv) {
+				wanted = true;
+				break;
+			}
+		}
+		if (wanted) continue;
+		store_chunk(c.key);
+		vol->remove_chunk(c.key.x, c.key.y, c.key.z);
+		free_chunk(c);
+		chunk_lookup.erase(c.key);
+		if (i < (int)chunks.size() - 1) { // swap-remove; queued jobs carry a stale index and re-find by key
+			chunks[i] = std::move(chunks.back());
+			chunk_lookup[chunks[i].key] = i;
+		}
+		chunks.pop_back();
+	}
+
+	for (const Viewer &v : active_viewers) {
+		const float rh = v.view_distance + margin, rv = v.vertical_view_distance + margin, rh2 = rh * rh;
+		const int x0 = (int)std::floor((v.pos.x - rh) / cs), x1 = (int)std::floor((v.pos.x + rh) / cs);
+		const int z0 = (int)std::floor((v.pos.z - rh) / cs), z1 = (int)std::floor((v.pos.z + rh) / cs);
+		const int y0 = (int)std::floor((v.pos.y - rv) / cs), y1 = (int)std::floor((v.pos.y + rv) / cs);
+		for (int z = z0; z <= z1; z++)
+			for (int y = y0; y <= y1; y++)
+				for (int x = x0; x <= x1; x++) {
+					dkv::ChunkKey key(x, y, z);
+					int32_t idx;
+					auto it = chunk_lookup.find(key);
+					if (it != chunk_lookup.end()) {
+						Chunk &c = chunks[it->second];
+						if (c.gen_queued || vol->has_chunk(x, y, z)) continue;
+						c.gen_queued = true;
+						idx = it->second;
+					} else {
+						dkv::Vec3 o = vol->chunk_origin(x, y, z);
+						Vector3 offset((float)o.x, (float)o.y, (float)o.z), center = offset + Vector3(0.5, 0.5, 0.5) * cs;
+						float dx = center.x - v.pos.x, dz = center.z - v.pos.z, dy = center.y - v.pos.y;
+						if (dx * dx + dz * dz > rh2 || std::fabs(dy) > rv) continue;
+						Chunk nc;
+						nc.key = key;
+						nc.offset = offset;
+						nc.gen_queued = true;
+						idx = (int32_t)chunks.size();
+						chunk_lookup[key] = idx;
+						chunks.push_back(std::move(nc));
+					}
+					Job j;
+					j.gen = generation;
+					j.is_gen = true;
+					j.key = key;
+					Vector3 gc = chunks[idx].offset + Vector3(0.5, 0.5, 0.5) * cs;
+					j.prio = active_viewers[0].pos.distance_to(gc); // nearest viewer first
+					for (size_t vi = 1; vi < active_viewers.size(); vi++) j.prio = MIN(j.prio, active_viewers[vi].pos.distance_to(gc));
+					j.index = idx;
+					auto sit = store.find(key);
+					if (sit != store.end()) {
+						j.stored = sit->second.data;
+						j.stored_size = sit->second.raw_size;
+					}
+					gen.push_back(std::move(j));
+				}
+	}
+	if (gen.empty()) return;
+	{
+		std::lock_guard lk(qm);
+		for (Job &j : gen) jobs.push(std::move(j));
+	}
+	qcv.notify_all();
+}
+
+// Pick each chunk's LOD from its distance to the nearest viewer and queue whatever is out of date.
 void VoxelWorld::scan() {
 	const float cs = dkv::CHUNK * vol->cell, hyst = cs * 0.5f;
-	const float coll = MIN(collision_distance, lod1_distance - cs);
 	auto lod_at = [&](float d) { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; };
+
+	if (!vol->bounded) stream_endless();
+
 	std::vector<Job> add;
 	for (int i = 0; i < (int)chunks.size(); i++) {
 		Chunk &c = chunks[i];
+		if (c.gen_queued || !vol->has_chunk(c.key.x, c.key.y, c.key.z)) continue;
 		Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
-		float d = viewer.distance_to(center);
-		int lo = lod_at(d - hyst), hi = lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
-		int want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
-		bool want_coll = d < (c.collision ? coll + hyst : coll);
+		float d = 0.0f;
+		bool in_mesh = vol->bounded, want_coll = false;
+		for (size_t v = 0; v < active_viewers.size(); v++) {
+			const Viewer &vw = active_viewers[v];
+			float dx = center.x - vw.pos.x, dz = center.z - vw.pos.z, dy = center.y - vw.pos.y;
+			float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+			if (v == 0 || dist < d) d = dist;
+			if (dx * dx + dz * dz <= vw.view_distance * vw.view_distance && std::fabs(dy) <= vw.vertical_view_distance) in_mesh = true;
+			if (dist < (c.collision ? vw.collision_distance + hyst : vw.collision_distance)) want_coll = true;
+		}
+		if (!in_mesh) {
+			if (c.lod < 0) continue; // margin ring: loaded so inner chunks have neighbours, never meshed
+			want_coll = false;
+		}
+		if (!vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
+		int want;
+		if (!in_mesh) {
+			want = c.lod; // keep what is on screen until the chunk is unloaded
+		} else {
+			int lo = lod_at(d - hyst), hi = lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
+			want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
+		}
 		if (!want_coll && c.body.is_valid()) free_chunk(c, true);
 		bool stale = c.applied_version != c.version;
 		if (!stale && c.lod == want && (c.collision || !want_coll)) continue;
@@ -161,19 +345,39 @@ void VoxelWorld::scan() {
 		c.queued = true;
 		c.queued_version = c.version;
 		bool urgent = stale && c.lod >= 0; // an edit to something already on screen
-		add.push_back({urgent ? d - 1e6f : d, i, (int8_t)want, want_coll, urgent, c.version});
+		Job j;
+		j.gen = generation;
+		j.key = c.key;
+		j.prio = urgent ? d - 1e6f : d;
+		j.index = i;
+		j.lod = (int8_t)want;
+		j.collision = want_coll;
+		j.urgent = urgent;
+		j.version = c.version;
+		add.push_back(std::move(j));
 	}
 	need_scan = false;
 	if (add.empty()) return;
 	{
 		std::lock_guard lk(qm);
-		for (const Job &j : add) jobs.push(j);
+		for (Job &j : add) jobs.push(std::move(j));
 	}
 	qcv.notify_all();
 }
 
 void VoxelWorld::apply(Result &r) {
-	Chunk &c = chunks[r.job.index];
+	if (r.job.gen != generation) return; // queued before a reset(): never touch the new world
+	if (r.job.is_gen) {
+		if (Chunk *c = find_chunk(r.job.key.x, r.job.key.y, r.job.key.z)) c->gen_queued = false;
+		if (r.has && !r.job.stored.is_empty()) store.erase(r.job.key); // loaded again: drop our copy
+		need_scan = true; // a new chunk may complete a neighbour's 26
+		return;
+	}
+	Chunk *cp = (r.job.index >= 0 && r.job.index < (int)chunks.size() && chunks[r.job.index].key == r.job.key)
+			? &chunks[r.job.index]
+			: find_chunk(r.job.key.x, r.job.key.y, r.job.key.z);
+	if (!cp) return; // unloaded while the job ran
+	Chunk &c = *cp;
 	if (r.job.version == c.queued_version) c.queued = false;
 	if (r.job.version != c.version) need_scan = true; // edited again meanwhile
 	if (r.job.version < c.applied_version || !is_inside_tree()) return;
@@ -259,16 +463,17 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 	ensure_volume();
 	Dictionary out, removed;
 	float total = 0;
+	bool changed = false;
+	AABB edited; // the shape's local [-half, half] box, in global space
 	if (vol) {
 		Transform3D l = gx().affine_inverse() * xf;
 		Basis b = l.basis.orthonormalized();
 		const float B[9] = {(float)b[0][0], (float)b[0][1], (float)b[0][2], (float)b[1][0], (float)b[1][1], (float)b[1][2], (float)b[2][0], (float)b[2][1], (float)b[2][2]};
 		dkv::EditResult r = vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp);
-		if (vol->bounded) { // endless worlds have no chunk list to invalidate yet (Task 5)
-			for (int z = r.cmin[2]; z <= r.cmax[2]; z++)
-				for (int y = r.cmin[1]; y <= r.cmax[1]; y++)
-					for (int x = r.cmin[0]; x <= r.cmax[0]; x++) chunks[chunk_index(x, y, z)].version++;
-		}
+		for (int z = r.cmin[2]; z <= r.cmax[2]; z++)
+			for (int y = r.cmin[1]; y <= r.cmax[1]; y++)
+				for (int x = r.cmin[0]; x <= r.cmax[0]; x++)
+					if (Chunk *ch = find_chunk(x, y, z)) ch->version++;
 		need_scan |= r.changed;
 		const float vv = vol->cell * vol->cell * vol->cell;
 		for (int i = 0; i < 256; i++)
@@ -277,13 +482,25 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 				total += r.removed[i] * vv;
 			}
 		out["changed"] = r.changed;
+		if (r.changed) {
+			changed = true;
+			Vector3 mn(1e20f, 1e20f, 1e20f), mx(-1e20f, -1e20f, -1e20f);
+			for (int i = 0; i < 8; i++) {
+				Vector3 p = xf.xform(Vector3(i & 1 ? half.x : -half.x, i & 2 ? half.y : -half.y, i & 4 ? half.z : -half.z));
+				mn = mn.min(p);
+				mx = mx.max(p);
+			}
+			edited = AABB(mn, mx - mn);
+		}
 	}
 	out["removed"] = removed; // material id -> m^3
 	out["volume"] = total;
+	if (changed) emit_signal("terrain_edited", edited, out);
 	return out;
 }
 
 void VoxelWorld::_bind_methods() {
+	ADD_SIGNAL(MethodInfo("terrain_edited", PropertyInfo(Variant::AABB, "aabb"), PropertyInfo(Variant::DICTIONARY, "result")));
 	ClassDB::bind_method(D_METHOD("reset"), &VoxelWorld::reset);
 	ClassDB::bind_method(D_METHOD("dig_sphere", "center", "radius", "power"), &VoxelWorld::dig_sphere, DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("build_sphere", "center", "radius", "material"), &VoxelWorld::build_sphere);
@@ -294,6 +511,7 @@ void VoxelWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("dig_cylinder", "transform", "radius", "half_height", "power", "sharp"), &VoxelWorld::dig_cylinder, DEFVAL(0), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("raycast", "origin", "direction", "max_distance"), &VoxelWorld::raycast);
 	ClassDB::bind_method(D_METHOD("get_density", "position"), &VoxelWorld::get_density);
+	ClassDB::bind_method(D_METHOD("is_area_ready", "aabb", "need_collision"), &VoxelWorld::is_area_ready, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("set_lod_error", "lod", "error"), &VoxelWorld::set_lod_error);
 	ClassDB::bind_method(D_METHOD("get_world_size"), &VoxelWorld::get_world_size);
 	ClassDB::bind_method(D_METHOD("get_pending_count"), &VoxelWorld::get_pending_count);
@@ -354,22 +572,21 @@ VoxelWorld::~VoxelWorld() {
 }
 
 void VoxelWorld::reset() {
+	generation++; // results still in flight belong to the world we are dropping
 	stop_workers();
 	for (Chunk &c : chunks) free_chunk(c);
 	chunks.clear();
+	chunk_lookup.clear();
+	store.clear();
 	vol.reset();
+	active_viewers.clear();
 	ensure_volume();
 	start_workers();
 }
 
 void VoxelWorld::_process(double) {
 	if (!vol || workers.empty()) return;
-	if (Camera3D *cam = get_viewport()->get_camera_3d()) viewer = to_local(cam->get_global_position());
-	Vector3i vc = Vector3i((viewer / (dkv::CHUNK * vol->cell)).floor());
-	if (vc != viewer_chunk) {
-		viewer_chunk = vc;
-		need_scan = true;
-	}
+	update_viewers();
 	if (need_scan) scan();
 	std::vector<Result> rs;
 	{
@@ -413,6 +630,45 @@ float VoxelWorld::get_density(Vector3 p) {
 	p = gx().xform_inv(p);
 	return vol ? vol->density({(float)p.x, (float)p.y, (float)p.z}) / 255.0f : 0.0f;
 }
+
+bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
+	ensure_volume();
+	if (!vol || workers.empty() || active_viewers.empty()) return false;
+	if (need_scan) scan();
+	Transform3D inv = gx().affine_inverse();
+	Vector3 p0 = inv.xform(aabb.position), p1 = inv.xform(aabb.position + aabb.size); // the world node may be rotated
+	Vector3 lmin = p0.min(p1), lmax = p0.max(p1);
+	const float cs = dkv::CHUNK * vol->cell;
+	int cmin[3], cmax[3];
+	for (int i = 0; i < 3; i++) {
+		cmin[i] = (int)std::floor(lmin[i] / cs);
+		cmax[i] = (int)std::floor((lmax[i] - 1e-4f) / cs);
+		if (vol->bounded) {
+			cmin[i] = MAX(cmin[i], vol->bmin[i]);
+			cmax[i] = MIN(cmax[i], vol->bmax[i] - 1);
+		}
+	}
+	const float hyst = cs * 0.5f;
+	auto lod_at = [&](float d) { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; };
+	for (int z = cmin[2]; z <= cmax[2]; z++)
+		for (int y = cmin[1]; y <= cmax[1]; y++)
+			for (int x = cmin[0]; x <= cmax[0]; x++) {
+				if (!vol->has_chunk(x, y, z)) return false;
+				Chunk *c = find_chunk(x, y, z);
+				if (!c || c->gen_queued || c->queued || c->applied_version != c->version || c->lod < 0) return false;
+				Vector3 center = c->offset + Vector3(0.5, 0.5, 0.5) * cs;
+				float d = 0.0f;
+				for (size_t v = 0; v < active_viewers.size(); v++) {
+					float dist = active_viewers[v].pos.distance_to(center);
+					if (v == 0 || dist < d) d = dist;
+				}
+				int lo = lod_at(d - hyst), hi = lod_at(d + hyst);
+				int want = (c->lod == lo || c->lod == hi) ? c->lod : lo;
+				if (c->lod != want) return false;
+				if (need_collision && c->tris > 0 && (!c->collision || !c->body.is_valid())) return false;
+			}
+	return true;
+}
 void VoxelWorld::set_lod_error(int lod, float e) {
 	if (vol && lod >= 1 && lod <= 2) vol->lod_error[lod] = e;
 }
@@ -425,6 +681,7 @@ Dictionary VoxelWorld::get_stats() {
 	d["triangles"] = stat_tris;
 	d["meshes"] = stat_meshes;
 	d["bodies"] = stat_bodies;
+	d["chunks"] = (int64_t)(vol ? vol->chunk_count() : 0);
 	d["pending"] = get_pending_count();
 	d["mesh_ms"] = stat_jobs ? stat_ms / stat_jobs : 0.0;
 	d["threads"] = (int)workers.size();

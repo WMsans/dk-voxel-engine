@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 
 #include <condition_variable>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using namespace godot;
@@ -23,20 +25,40 @@ class VoxelWorld : public Node3D {
 	GDCLASS(VoxelWorld, Node3D)
 
 	struct Chunk {
+		dkv::ChunkKey key;
 		RID mesh, instance, body, shape;
 		Vector3 offset; // chunk origin in metres, relative to the world node (mesh vertices are chunk-relative)
 		int8_t lod = -1; // LOD on screen, -1 = never meshed
 		bool collision = false; // the mesh on screen was built with collision
 		bool queued = false;
+		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
 		uint32_t version = 1, queued_version = 0, applied_version = 0; // version bumps on every edit
 		int32_t tris = 0;
 	};
+	// One viewer driving LOD, collision and (endless) streaming, in the world's local space.
+	struct Viewer {
+		Vector3 pos;
+		Vector3i chunk = Vector3i(INT32_MAX, 0, 0);
+		float view_distance = 160.0f;
+		float vertical_view_distance = 96.0f;
+		float collision_distance = 40.0f;
+	};
+	// An unloaded edited chunk, kept in memory until something generates it again (Task 6 writes it to disk).
+	struct StoredChunk {
+		uint32_t raw_size = 0;
+		PackedByteArray data;
+	};
 	struct Job {
-		float prio;
-		int32_t index;
-		int8_t lod;
-		bool collision, urgent;
-		uint32_t version;
+		uint64_t gen = 0; // the world generation that queued it; results from an older one are dropped
+		bool is_gen = false; // endless: fill/restore a chunk instead of meshing it
+		dkv::ChunkKey key;
+		PackedByteArray stored;
+		uint32_t stored_size = 0;
+		float prio = 0;
+		int32_t index = -1;
+		int8_t lod = 0;
+		bool collision = false, urgent = false;
+		uint32_t version = 0;
 		bool operator<(const Job &o) const { return prio > o.prio; }
 	};
 	struct Result {
@@ -47,7 +69,11 @@ class VoxelWorld : public Node3D {
 	};
 
 	std::unique_ptr<dkv::Volume> vol;
-	std::vector<Chunk> chunks;
+	std::vector<Chunk> chunks; // bounded: one per chunk in the bounds, indexed as in the Volume
+	std::unordered_map<dkv::ChunkKey, int32_t, dkv::ChunkKeyHash> chunk_lookup; // endless: key -> index in chunks
+	std::unordered_map<dkv::ChunkKey, StoredChunk, dkv::ChunkKeyHash> store; // endless: unloaded edits
+	std::vector<Viewer> active_viewers;
+	std::shared_ptr<const dkv::Generator> active_generator; // rebuilt by ensure_volume(), read by the workers
 	Ref<Material> material;
 	Ref<VoxelGenerator> generator;
 	Ref<VoxelMaterialSet> material_set;
@@ -65,8 +91,7 @@ class VoxelWorld : public Node3D {
 	std::vector<std::thread> workers;
 	bool quit = false;
 
-	Vector3 viewer;
-	Vector3i viewer_chunk = Vector3i(INT32_MAX, 0, 0);
+	uint64_t generation = 0; // bumped by reset(): results queued before it are never applied
 	bool need_scan = true;
 	int64_t stat_tris = 0;
 	int stat_meshes = 0, stat_bodies = 0, stat_jobs = 0;
@@ -80,11 +105,6 @@ class VoxelWorld : public Node3D {
 	int ncy() const { return vol->bmax[1] - vol->bmin[1]; }
 	int ncz() const { return vol->bmax[2] - vol->bmin[2]; }
 	int chunk_index(int x, int y, int z) const { return ((int)((size_t)(z - vol->bmin[2]) * ncy() + (y - vol->bmin[1])) * ncx() + (x - vol->bmin[0])); }
-	void chunk_coord(int i, int &x, int &y, int &z) const {
-		x = vol->bmin[0] + i % ncx();
-		y = vol->bmin[1] + i / ncx() % ncy();
-		z = vol->bmin[2] + i / (ncx() * ncy());
-	}
 	Transform3D chunk_transform(Chunk &c) const { return gx() * Transform3D(Basis(), c.offset); }
 
 	// Builds the Volume from the properties on first use: first edit, query or _ready. Bounded worlds are
@@ -98,8 +118,16 @@ class VoxelWorld : public Node3D {
 	void start_workers();
 	void stop_workers();
 
+	// Collects the VoxelViewers that share our World3D (the active camera when there is none).
+	void update_viewers();
+	Chunk *find_chunk(int cx, int cy, int cz);
 	void worker();
 	void free_chunk(Chunk &c, bool body_only = false);
+
+	// Endless streaming: unload what no viewer wants (keeping edits in `store`), then queue generate
+	// jobs for the wanted set. Bounded worlds keep every chunk and never call this.
+	void stream_endless();
+	void store_chunk(const dkv::ChunkKey &key);
 
 	// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
 	void scan();
@@ -134,6 +162,9 @@ public:
 	// Marches the voxel field itself, so it works before (and beyond where) collision exists.
 	Dictionary raycast(Vector3 origin, Vector3 dir, float max_dist);
 	float get_density(Vector3 p);
+	// True when every chunk under `aabb` (global) is loaded and meshed at its wanted LOD, and, with
+	// `need_collision`, has a body unless it has no surface.
+	bool is_area_ready(const AABB &aabb, bool need_collision = true);
 	void set_lod_error(int lod, float e);
 	Vector3 get_world_size() const { return vol ? Vector3(vol->bmax[0] - vol->bmin[0], vol->bmax[1] - vol->bmin[1], vol->bmax[2] - vol->bmin[2]) * (dkv::CHUNK * vol->cell) : Vector3(); }
 	int get_pending_count();
