@@ -15,10 +15,13 @@ struct Volume::Chunk {
 	bool modified = false; // edited since it was generated or loaded
 };
 
-Volume::Volume(float cell_size) : cell(cell_size), bounded(false), bmin{0, 0, 0}, bmax{0, 0, 0} {}
+Volume::Volume(float cell_size) : cell(cell_size), bounded(false), bmin{0, 0, 0}, bmax{0, 0, 0} {
+	for (int i = 0; i < 256; i++) inner[i] = (uint8_t)i;
+}
 
 Volume::Volume(int chunks_x, int chunks_y, int chunks_z, float cell_size) :
 		cell(cell_size), bounded(true), bmin{0, 0, 0}, bmax{chunks_x, chunks_y, chunks_z} {
+	for (int i = 0; i < 256; i++) inner[i] = (uint8_t)i;
 	for (int z = 0; z < chunks_z; z++)
 		for (int y = 0; y < chunks_y; y++)
 			for (int x = 0; x < chunks_x; x++) chunks.emplace(ChunkKey(x, y, z), std::make_unique<Chunk>());
@@ -290,12 +293,16 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 			for (int y = lo[1]; y <= hi[1]; y++)
 				for (int x = lo[0]; x <= hi[0]; x++) old[ri(x, y, z)] = get_unlocked(x, y, z).d;
 	}
+	// An erase repaints solid voxels up to 2 cells out, not just the 1-cell density band: a surface cell's far
+	// corners sit up to sqrt(3) cells from the cut, and an unpainted corner bleeds the outer material onto it.
+	const float reach = mode == ERASE && expose_inner ? 2.0f : 1.0f;
+	std::vector<std::array<int, 3>> paint;
 	auto old_d = [&](int x, int y, int z) -> float { return in_region(x, y, z) ? old[ri(x, y, z)] : get_unlocked(x, y, z).d; };
 	for (int z = lo[2]; z <= hi[2]; z++)
 		for (int y = lo[1]; y <= hi[1]; y++)
 			for (int x = lo[0]; x <= hi[0]; x++) {
 				float sd = sdf(Vec3(x * cell, y * cell, z * cell)) / cell;
-				if (sd > 1.0f) continue;
+				if (sd > reach) continue;
 				Voxel v = get_unlocked(x, y, z), nv = v;
 				uint8_t sh = sdf_to_density(sd);
 				if (mode == BUILD) {
@@ -303,7 +310,13 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 				} else if (hardness[v.m] > power) {
 					continue;
 				} else if (mode == ERASE) {
-					if (255 - sh < v.d) nv.d = 255 - sh;
+					if (255 - sh < v.d) {
+						nv.d = 255 - sh;
+						if (expose_inner) nv.m = inner[v.m];
+					} else if (expose_inner && v.d > 0 && inner[v.m] != v.m) {
+						paint.push_back({x, y, z}); // solid near the cut: repainted below if the dig removed anything
+						continue;
+					}
 				} else if (sd < 0) {
 					float avg = (old_d(x, y, z) + old_d(x - 1, y, z) + old_d(x + 1, y, z) + old_d(x, y - 1, z) + old_d(x, y + 1, z) + old_d(x, y, z - 1) + old_d(x, y, z + 1)) / 7.0f;
 					nv.d = to_u8(v.d + (avg - v.d) * std::clamp(strength * std::min(-sd * 0.5f, 1.0f), 0.0f, 1.0f));
@@ -317,6 +330,8 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 				res.changed = true;
 			}
 	if (!res.changed) return res;
+	for (const auto &p : paint) // no chg mark: density is unchanged, so its Hermite edges stay valid
+		if (Voxel *dst = writable(p[0], p[1], p[2])) dst->m = inner[dst->m];
 
 	// Hermite data. Sharp edits store the exact crossing and analytic normal of every edge the shape now
 	// defines; everything else that was touched is erased so it falls back to the density field.

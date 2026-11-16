@@ -95,6 +95,7 @@ struct WorldState {
 	int threads = 0; // 0 = cores - 2, min 1
 	float lod1_distance = 90, lod2_distance = 170, collision_distance = 40;
 	uint32_t collision_layer = 1;
+	bool expose_inner_material = true;
 	uint64_t material_fingerprint = 0; // the texture identity the packed arrays were built from
 
 	std::priority_queue<Job> jobs;

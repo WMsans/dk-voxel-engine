@@ -21,6 +21,11 @@ public:
 	const int bmin[3], bmax[3]; // chunk bounds, exclusive max; unused when endless
 	float lod_error[3] = {0.0f, 0.02f, 0.12f}; // QEF error budget per LOD (cells^2)
 	uint8_t hardness[256] = {}; // erase needs power >= hardness
+	// Bananza's InnerMaterial: an erase rewrites every voxel it carves into to inner[m], so a dug surface shows
+	// its broken inside (grass -> torn turf, rock -> broken rock). Identity = no change. Chains (a -> b -> c)
+	// advance one step per dig over the same voxels.
+	uint8_t inner[256];
+	bool expose_inner = true; // false while authoring (ruins, level dressing): carve without the broken look
 
 	bool in_bounds(int cx, int cy, int cz) const; // always true when endless
 	bool has_chunk(int cx, int cy, int cz) const;

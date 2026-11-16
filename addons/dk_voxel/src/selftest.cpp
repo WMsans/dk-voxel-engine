@@ -129,6 +129,24 @@ int main() {
 		CHECK(!v.edit(SPHERE, ERASE, {16, 16, 16}, {9, 0, 0}, ID, 0, 3, 1, false).changed, "unbreakable material was dug");
 	}
 
+	printf("inner material\n");
+	{
+		Volume v(4, 4, 4, 0.5f);
+		v.edit(BOX, BUILD, {16, 16, 16}, {10, 10, 10}, ID, 1, 0, 1, false);
+		v.inner[1] = 2; v.inner[2] = 3; // grass -> torn turf -> soil
+		v.edit(SPHERE, ERASE, {16, 26, 16}, {3.2f, 0, 0}, ID, 0, 0, 1, false);
+		Voxel dug = v.get(32, 45, 32), below = v.get(32, 38, 32), far = v.get(52, 52, 52);
+		CHECK(dug.d >= 128 && dug.m == 2, "dug surface voxel: d %d m %d", dug.d, dug.m);
+		CHECK(below.m == 1 && far.m == 1, "untouched voxels changed: %d %d", below.m, far.m);
+		CHECK(v.get(32, 44, 32).m == 2, "solid 1.6 cells from the cut should be repainted: %d", v.get(32, 44, 32).m);
+		CHECK(!v.edit(SPHERE, ERASE, {10, 28.6f, 10}, {2, 0, 0}, ID, 0, 0, 1, false).changed && v.get(20, 52, 20).m == 1, "a dig in the air repainted the ground");
+		v.edit(SPHERE, ERASE, {16, 26, 16}, {3.4f, 0, 0}, ID, 0, 0, 1, false);
+		CHECK(v.get(32, 45, 32).m == 3, "second dig should advance the chain: %d", v.get(32, 45, 32).m);
+		v.expose_inner = false;
+		v.edit(SPHERE, ERASE, {24, 26, 24}, {3.2f, 0, 0}, ID, 0, 0, 1, false);
+		CHECK(v.get(48, 45, 48).m == 1, "expose_inner off still swapped: %d", v.get(48, 45, 48).m);
+	}
+
 	printf("sharp box (Hermite data)\n");
 	{
 		Volume s(4, 4, 4, 0.5f), r(4, 4, 4, 0.5f);

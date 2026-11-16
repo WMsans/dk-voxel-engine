@@ -129,6 +129,12 @@ func _initialize() -> void:
 	single.materials = only
 	w2.material_set = single
 	check(not w2.dig_sphere(Vector3(2, 2, 2), 1.0, 0).changed, "unlisted material id inherits entry 0 hardness")
+	# inner_material: a dig repaints the surface it exposes. Editing the def in place re-applies the table.
+	d0.hardness = 0
+	d0.inner_material = 2
+	w2.dig_sphere(Vector3(2, 3.5, 2), 1.1, 0)
+	var floor_hit := w2.raycast(Vector3(2, 6, 2), Vector3.DOWN, 10.0)
+	check(floor_hit.get("material", -1) == 2, "dig exposes the inner material (%s)" % floor_hit)
 	w2.free()
 
 	# The material set must reach the shader: 32 slots of colour and pattern parameters, entry 0 carrying

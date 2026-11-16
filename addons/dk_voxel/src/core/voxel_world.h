@@ -82,6 +82,12 @@ public:
 	Ref<VoxelGenerator> get_generator() const { return st->generator; }
 	void set_save_directory(const String &v) { st->save_directory = v; }
 	String get_save_directory() const { return st->save_directory; }
+	// Digs turn carved voxels into their material's inner_material. Turn off while authoring with digs.
+	void set_expose_inner_material(bool v) {
+		st->expose_inner_material = v;
+		if (st->vol) st->vol->expose_inner = v;
+	}
+	bool get_expose_inner_material() const { return st->expose_inner_material; }
 	void set_material_set(const Ref<VoxelMaterialSet> &s);
 	Ref<VoxelMaterialSet> get_material_set() const { return st->material_set; }
 	void set_cell_size(float v) { st->cell_size = v; }

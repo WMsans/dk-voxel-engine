@@ -65,11 +65,17 @@ Ref<VoxelMaterialDef> dkv::material_def(const Ref<VoxelMaterialSet> &set, int id
 	return m;
 }
 
-void dkv::apply_hardness(WorldState &st) {
+void dkv::apply_material_rules(WorldState &st) {
 	if (!st.vol) return;
+	st.vol->expose_inner = st.expose_inner_material;
 	memset(st.vol->hardness, 0, sizeof(st.vol->hardness));
+	for (int i = 0; i < 256; i++) st.vol->inner[i] = (uint8_t)i;
 	if (!st.material_set.is_valid() || st.material_set->get_materials().is_empty()) return;
-	for (int i = 0; i < 256; i++) st.vol->hardness[i] = (uint8_t)material_def(st.material_set, i)->get_hardness();
+	for (int i = 0; i < 256; i++) {
+		Ref<VoxelMaterialDef> def = material_def(st.material_set, i);
+		st.vol->hardness[i] = (uint8_t)def->get_hardness();
+		if (def->get_inner_material() >= 0) st.vol->inner[i] = (uint8_t)def->get_inner_material();
+	}
 }
 
 void dkv::apply_material_set(WorldState &st) {
@@ -139,6 +145,9 @@ void VoxelMaterialDef::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_hardness", "v"), &VoxelMaterialDef::set_hardness);
 	ClassDB::bind_method(D_METHOD("get_hardness"), &VoxelMaterialDef::get_hardness);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "hardness"), "set_hardness", "get_hardness");
+	ClassDB::bind_method(D_METHOD("set_inner_material", "v"), &VoxelMaterialDef::set_inner_material);
+	ClassDB::bind_method(D_METHOD("get_inner_material"), &VoxelMaterialDef::get_inner_material);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "inner_material", PROPERTY_HINT_RANGE, "-1,255"), "set_inner_material", "get_inner_material");
 	ClassDB::bind_method(D_METHOD("set_albedo", "v"), &VoxelMaterialDef::set_albedo);
 	ClassDB::bind_method(D_METHOD("get_albedo"), &VoxelMaterialDef::get_albedo);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "albedo", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_albedo", "get_albedo");

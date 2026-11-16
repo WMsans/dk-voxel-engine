@@ -48,7 +48,7 @@ void VoxelWorld::ensure_volume() {
 		}
 		for (dkv::WorldState::Chunk &c : st->chunks) c.version++;
 	}
-	dkv::apply_hardness(*st);
+	dkv::apply_material_rules(*st);
 	st->need_scan = st->need_stream = true;
 }
 
@@ -164,6 +164,7 @@ void VoxelWorld::_bind_methods() {
 	PROP(Variant::FLOAT, collision_distance)
 	PROP(Variant::INT, collision_layer)
 	PROP(Variant::STRING, save_directory)
+	PROP(Variant::BOOL, expose_inner_material)
 #undef PROP
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &VoxelWorld::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &VoxelWorld::get_material);
@@ -356,7 +357,7 @@ void VoxelWorld::set_generator(const Ref<VoxelGenerator> &g) {
 	st->generator_class = g.is_valid() ? g->get_class() : String();
 }
 void VoxelWorld::_materials_changed() {
-	dkv::apply_hardness(*st);
+	dkv::apply_material_rules(*st);
 	dkv::apply_material_set(*st);
 }
 

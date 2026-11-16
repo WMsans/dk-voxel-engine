@@ -1,16 +1,24 @@
 extends VoxelWorld
 ## The demo world node: material set, terrain profile, ruins, and the debris and bombs of an edit.
 
-const MATERIALS := [ # name, albedo, normal/roughness/AO, tiles per metre, roughness factor, metallic, emission, hardness
-	["Default", "soil", "soil", 0.5, 0.9, 0.0, 0.0, 0],
-	["Grass", "grass", "grass", 0.22, 0.95, 0.0, 0.0, 0],
-	["Soil", "soil", "soil", 0.3, 0.95, 0.0, 0.0, 0],
-	["Rock", "rock", "rock", 0.16, 0.8, 0.0, 0.0, 1],
-	["Sand", "sand", "sand", 0.4, 1.0, 0.0, 0.0, 0],
-	["Gold", "gold", "gold", 0.35, 0.3, 1.0, 0.2, 1],
-	["Bedrock", "bedrock", "bedrock", 0.14, 0.6, 0.0, 0.0, 255],
-	["Brick", "brick", "brick", 0.3, 0.85, 0.0, 0.0, 1],
-	["Crystal", "crystal", "crystal", 0.2, 0.15, 0.3, 1.2, 2],
+# name, albedo, normal/roughness/AO, tiles per metre, roughness factor, metallic, emission, hardness, inner material.
+# Inner material (Bananza's InnerMaterial): what a dig turns the carved surface into, -1 = itself. Ids 9+ are the
+# broken insides, textured from terrain_textures_vol2 by demo/textures/make_inner_textures.py.
+const MATERIALS := [
+	["Default", "soil", "soil", 0.5, 0.9, 0.0, 0.0, 0, -1],
+	["Grass", "grass", "grass", 0.22, 0.95, 0.0, 0.0, 0, 9],
+	["Soil", "soil", "soil", 0.3, 0.95, 0.0, 0.0, 0, 10],
+	["Rock", "rock", "rock", 0.16, 0.8, 0.0, 0.0, 1, 11],
+	["Sand", "sand", "sand", 0.4, 1.0, 0.0, 0.0, 0, -1],
+	["Gold", "gold", "gold", 0.35, 0.3, 1.0, 0.2, 1, -1],
+	["Bedrock", "bedrock", "bedrock", 0.14, 0.6, 0.0, 0.0, 255, -1],
+	["Brick", "brick", "brick", 0.3, 0.85, 0.0, 0.0, 1, 12],
+	["Crystal", "crystal", "crystal", 0.2, 0.15, 0.3, 1.2, 2, 13],
+	["Torn turf", "turf", "turf", 0.3, 0.95, 0.0, 0.0, 0, 10], # grass -> turf -> dug soil
+	["Dug soil", "dug_soil", "dug_soil", 0.3, 0.95, 0.0, 0.0, 0, -1],
+	["Broken rock", "broken_rock", "broken_rock", 0.25, 0.85, 0.0, 0.0, 1, -1],
+	["Rubble", "rubble", "rubble", 0.35, 0.9, 0.0, 0.0, 1, -1],
+	["Cracked crystal", "cracked_crystal", "cracked_crystal", 0.25, 0.2, 0.3, 1.0, 2, -1],
 ]
 const CELL := 0.5
 const GROUND_FROM := 400.0 # raycast down from here to find the ground: endless worlds have no height
@@ -96,6 +104,7 @@ func _make_material_set() -> VoxelMaterialSet:
 		d.metallic = m[5]
 		d.emission = m[6]
 		d.hardness = m[7]
+		d.inner_material = m[8]
 		defs.append(d)
 	set.materials = defs
 	return set
@@ -110,6 +119,7 @@ func _make_terrain_material() -> ShaderMaterial:
 
 ## Sharp-edged structures: the Hermite path of the mesher. Everything here is plain CSG on the voxel field.
 func build_ruins(at: Vector3) -> void:
+	expose_inner_material = false # authored cuts: clean brick, not rubble
 	var g := ground(at)
 	var base := Transform3D(Basis(Vector3.UP, 0.4), g + Vector3.UP * 3.0)
 	build_box(base, Vector3(5, 4.5, 5), 7)
@@ -122,6 +132,7 @@ func build_ruins(at: Vector3) -> void:
 		build_box(Transform3D(Basis(), p + Vector3.UP * 7.3), Vector3(1.3, 0.35, 1.3), 3)
 	for i in 8: # stairs up to the tower
 		build_box(base.translated_local(Vector3(0, -4.2 + i * 0.5, 13.0 - i * 1.0)), Vector3(1.6, 0.25, 0.5), 3)
+	expose_inner_material = true
 
 
 ## Turns an edit result into feedback: gold tally and tumbling fragments of whatever was removed.
@@ -138,6 +149,8 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 		debris.pop_front().queue_free()
 	if not debris_mats.has(id):
 		var d := _material(id)
+		if d.inner_material >= 0: # fragments show the broken inside too (Bananza's IsInnerFragment)
+			d = _material(d.inner_material)
 		var m := StandardMaterial3D.new()
 		m.albedo_texture = d.albedo
 		m.roughness = d.roughness

@@ -30,6 +30,7 @@ class VoxelMaterialDef : public Resource {
 	float metallic = 0.0f;
 	float emission = 0.0f;
 	int hardness = 0;
+	int inner_material = -1; // id a dig turns this material into (its broken inside); -1 = stays itself
 	Ref<Texture2D> albedo; // null = the built-in grain
 	Ref<Texture2D> normal; // null = flat
 	Ref<Texture2D> roughness_map; // null = 1.0, so the scalar `roughness` alone applies
@@ -52,6 +53,8 @@ public:
 	float get_emission() const { return emission; }
 	void set_hardness(int p_hardness) { hardness = CLAMP(p_hardness, 0, 255); emit_changed(); }
 	int get_hardness() const { return hardness; }
+	void set_inner_material(int p_id) { inner_material = CLAMP(p_id, -1, 255); emit_changed(); }
+	int get_inner_material() const { return inner_material; }
 	void set_albedo(const Ref<Texture2D> &p_texture) { albedo = p_texture; emit_changed(); }
 	Ref<Texture2D> get_albedo() const { return albedo; }
 	void set_normal(const Ref<Texture2D> &p_texture) { normal = p_texture; emit_changed(); }
@@ -87,8 +90,8 @@ namespace dkv {
 // Def for a material id: entry `id` if the set has one, else entry 0 (a non-empty set), else a default grey
 // zero-hardness def.
 Ref<VoxelMaterialDef> material_def(const Ref<VoxelMaterialSet> &set, int id);
-// Copies the set's hardness table into the volume.
-void apply_hardness(WorldState &st);
+// Copies the set's hardness and inner-material tables, and the world's expose_inner flag, into the volume.
+void apply_material_rules(WorldState &st);
 // Packs each of albedo, normal, roughness and AO into one Texture2DArray (layer = material id) and pushes every
 // uniform the terrain shader reads: albedo_tex, normal_tex, roughness_tex, ao_tex, color_a, color_b, params.
 void apply_material_set(WorldState &st);

@@ -58,6 +58,11 @@ Properties:
   higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
   set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey
   default. Hardness 255 is unbreakable and an erase needs `power >= hardness`.
+  `inner_material` (Bananza's InnerMaterial) is the id a dig turns this material into: every solid voxel
+  within 2 cells of the cut takes it, so a crater shows the broken inside (grass → torn turf, rock → broken
+  rock) while untouched ground keeps its outer look. -1 = stays itself. Chains advance one step per dig.
+- `expose_inner_material` — on by default; turn it off around digs that author shapes (doors, windows) rather
+  than destroy them, so they stay clean.
 - `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
 - `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
