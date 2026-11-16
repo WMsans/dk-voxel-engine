@@ -1,0 +1,60 @@
+#include "terrain_resources.h"
+
+#include "demo_terrain.h"
+#include "level_terrain.h"
+
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/core/class_db.hpp>
+
+using namespace godot;
+
+std::shared_ptr<const dkv::Generator> DemoTerrainGenerator::create_generator() const {
+	auto g = std::make_shared<dkv::DemoTerrain>();
+	g->seed = seed;
+	g->height = height;
+	return g;
+}
+
+void DemoTerrainGenerator::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_seed", "v"), &DemoTerrainGenerator::set_seed);
+	ClassDB::bind_method(D_METHOD("get_seed"), &DemoTerrainGenerator::get_seed);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
+	ClassDB::bind_method(D_METHOD("set_height", "v"), &DemoTerrainGenerator::set_height);
+	ClassDB::bind_method(D_METHOD("get_height"), &DemoTerrainGenerator::get_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "height"), "set_height", "get_height");
+}
+
+std::shared_ptr<const dkv::Generator> LevelTerrainGenerator::create_generator() const {
+	loaded.reset();
+	const PackedByteArray bytes = FileAccess::get_file_as_bytes(level_path);
+	ERR_FAIL_COND_V_MSG(bytes.is_empty(), nullptr, "LevelTerrainGenerator: cannot read " + level_path);
+	auto g = std::make_shared<dkv::LevelTerrain>();
+	std::string err;
+	ERR_FAIL_COND_V_MSG(!g->load(bytes.ptr(), (size_t)bytes.size(), err), nullptr, "LevelTerrainGenerator: " + level_path + ": " + String(err.c_str()));
+	return loaded = g;
+}
+
+Vector3 LevelTerrainGenerator::get_level_size() const {
+	if (!loaded) create_generator();
+	auto g = std::static_pointer_cast<const dkv::LevelTerrain>(loaded);
+	return g ? Vector3(g->size[0], g->size[1], g->size[2]) : Vector3();
+}
+
+Vector3 LevelTerrainGenerator::get_spawn_point() const {
+	if (!loaded) create_generator();
+	auto g = std::static_pointer_cast<const dkv::LevelTerrain>(loaded);
+	return g ? Vector3(g->spawn[0], g->spawn[1], g->spawn[2]) : Vector3();
+}
+
+void LevelTerrainGenerator::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_level_path", "path"), &LevelTerrainGenerator::set_level_path);
+	ClassDB::bind_method(D_METHOD("get_level_path"), &LevelTerrainGenerator::get_level_path);
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "level_path", PROPERTY_HINT_FILE, "*.dkvl"), "set_level_path", "get_level_path");
+	ClassDB::bind_method(D_METHOD("get_level_size"), &LevelTerrainGenerator::get_level_size);
+	ClassDB::bind_method(D_METHOD("get_spawn_point"), &LevelTerrainGenerator::get_spawn_point);
+}
+
+void dk_voxel_register_terrain() {
+	GDREGISTER_CLASS(DemoTerrainGenerator);
+	GDREGISTER_CLASS(LevelTerrainGenerator);
+}

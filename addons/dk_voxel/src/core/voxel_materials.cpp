@@ -1,0 +1,178 @@
+// Material packing: VoxelMaterialDef/VoxelMaterialSet bindings, and the sampler arrays the shader samples.
+#include "voxel_materials.h"
+
+#include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/classes/shader_material.hpp>
+#include <godot_cpp/classes/texture2d_array.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/object.hpp>
+#include <godot_cpp/variant/callable_method_pointer.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+
+#include <cstring>
+
+using namespace godot;
+
+namespace {
+
+// Every layer of a Texture2DArray shares one size and format.
+constexpr int TEXTURE_ARRAY_SIZE = 256;
+
+// A near-white grain, so a material with no textures keeps the demo's speckled look. The shader's tint ramp
+// turns its luminance into the two-colour pattern.
+Ref<Image> grain_image() {
+	Ref<Image> img = Image::create(64, 64, false, Image::FORMAT_RGBA8);
+	uint32_t h = 0x9e3779b9u;
+	for (int y = 0; y < 64; y++)
+		for (int x = 0; x < 64; x++) {
+			h = h * 1664525u + 1013904223u;
+			const float t = 0.55f + 0.45f * (float)((h >> 16) & 0xff) / 255.0f;
+			img->set_pixel(x, y, Color(t, t, t));
+		}
+	return img;
+}
+
+Ref<Image> flat_normal_image() {
+	Ref<Image> img = Image::create(TEXTURE_ARRAY_SIZE, TEXTURE_ARRAY_SIZE, false, Image::FORMAT_RGBA8);
+	img->fill(Color(0.5f, 0.5f, 1.0f));
+	return img;
+}
+
+// One array layer from a Texture2D, resized to the array's size. Never mutates the game's image.
+Ref<Image> layer_image(const Ref<Texture2D> &tex, const Ref<Image> &fallback) {
+	Ref<Image> src;
+	if (tex.is_valid()) src = tex->get_image();
+	if (src.is_valid()) src = src->duplicate();
+	if (src.is_null()) src = fallback->duplicate();
+	if (src->is_compressed()) src->decompress();
+	if (src->get_format() != Image::FORMAT_RGBA8) src->convert(Image::FORMAT_RGBA8);
+	if (src->get_width() != TEXTURE_ARRAY_SIZE || src->get_height() != TEXTURE_ARRAY_SIZE)
+		src->resize(TEXTURE_ARRAY_SIZE, TEXTURE_ARRAY_SIZE, Image::INTERPOLATE_LANCZOS);
+	src->generate_mipmaps();
+	return src;
+}
+
+// Cheap identity of the set's textures, so a colour-only change does not rebuild two arrays.
+uint64_t texture_fingerprint(const Ref<VoxelMaterialSet> &set) {
+	uint64_t h = 1469598103934665603ull;
+	for (int i = 0; i < dkv::MATERIAL_SLOTS; i++) {
+		Ref<VoxelMaterialDef> def = dkv::material_def(set, i);
+		Ref<Texture2D> texs[2] = {def->get_albedo(), def->get_normal()};
+		for (const Ref<Texture2D> &tex : texs) {
+			const int64_t id = tex.is_valid() ? (int64_t)tex->get_instance_id() : 0;
+			h = (h ^ (uint64_t)id) * 1099511628211ull;
+		}
+	}
+	return h;
+}
+
+} // namespace
+
+Ref<VoxelMaterialDef> dkv::material_def(const Ref<VoxelMaterialSet> &set, int id) {
+	TypedArray<VoxelMaterialDef> mats = set.is_valid() ? set->get_materials() : TypedArray<VoxelMaterialDef>();
+	Ref<VoxelMaterialDef> m;
+	if (id >= 0 && id < (int)mats.size()) m = mats[id];
+	if (!m.is_valid() && !mats.is_empty()) m = mats[0]; // missing id (or a null entry): entry 0
+	if (!m.is_valid()) m.instantiate(); // no set, or an empty one: grey default
+	return m;
+}
+
+void dkv::apply_hardness(WorldState &st) {
+	if (!st.vol) return;
+	memset(st.vol->hardness, 0, sizeof(st.vol->hardness));
+	if (!st.material_set.is_valid() || st.material_set->get_materials().is_empty()) return;
+	for (int i = 0; i < 256; i++) st.vol->hardness[i] = (uint8_t)material_def(st.material_set, i)->get_hardness();
+}
+
+void dkv::apply_material_set(WorldState &st) {
+	ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(st.material.ptr());
+	if (!sm) return;
+
+	// Colours and parameters describe every slot and are cheap: always push them.
+	PackedColorArray ca, cb;
+	Array params;
+	for (int i = 0; i < MATERIAL_SLOTS; i++) {
+		Ref<VoxelMaterialDef> m = material_def(st.material_set, i);
+		ca.push_back(m->get_color_a());
+		cb.push_back(m->get_color_b());
+		params.push_back(Vector4(m->get_pattern_scale(), m->get_roughness(), m->get_metallic(), m->get_emission()));
+	}
+	sm->set_shader_parameter("color_a", ca);
+	sm->set_shader_parameter("color_b", cb);
+	sm->set_shader_parameter("params", params);
+
+	const TypedArray<VoxelMaterialDef> mats = st.material_set.is_valid() ? st.material_set->get_materials() : TypedArray<VoxelMaterialDef>();
+	if (mats.size() > MATERIAL_SLOTS)
+		UtilityFunctions::push_error("VoxelWorld: material set has " + String::num_int64(mats.size()) + " entries but the shader has " +
+				String::num_int64(MATERIAL_SLOTS) + " slots; the extra entries are ignored");
+
+	const uint64_t fingerprint = texture_fingerprint(st.material_set);
+	if (fingerprint == st.material_fingerprint && sm->get_shader_parameter("albedo_tex").get_type() == Variant::OBJECT) return;
+	st.material_fingerprint = fingerprint;
+
+	const Ref<Image> grain = grain_image(), flat = flat_normal_image();
+	TypedArray<Ref<Image>> albedo_layers, normal_layers;
+	for (int i = 0; i < MATERIAL_SLOTS; i++) {
+		Ref<VoxelMaterialDef> m = material_def(st.material_set, i);
+		albedo_layers.push_back(layer_image(m->get_albedo(), grain));
+		normal_layers.push_back(layer_image(m->get_normal(), flat));
+	}
+	Ref<Texture2DArray> albedo;
+	albedo.instantiate();
+	Ref<Texture2DArray> normal;
+	normal.instantiate();
+	if (albedo->create_from_images(albedo_layers) == OK) sm->set_shader_parameter("albedo_tex", albedo);
+	if (normal->create_from_images(normal_layers) == OK) sm->set_shader_parameter("normal_tex", normal);
+}
+
+void VoxelMaterialDef::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_name", "v"), &VoxelMaterialDef::set_name);
+	ClassDB::bind_method(D_METHOD("get_name"), &VoxelMaterialDef::get_name);
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name"), "set_name", "get_name");
+	ClassDB::bind_method(D_METHOD("set_color_a", "v"), &VoxelMaterialDef::set_color_a);
+	ClassDB::bind_method(D_METHOD("get_color_a"), &VoxelMaterialDef::get_color_a);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "color_a"), "set_color_a", "get_color_a");
+	ClassDB::bind_method(D_METHOD("set_color_b", "v"), &VoxelMaterialDef::set_color_b);
+	ClassDB::bind_method(D_METHOD("get_color_b"), &VoxelMaterialDef::get_color_b);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "color_b"), "set_color_b", "get_color_b");
+	ClassDB::bind_method(D_METHOD("set_pattern_scale", "v"), &VoxelMaterialDef::set_pattern_scale);
+	ClassDB::bind_method(D_METHOD("get_pattern_scale"), &VoxelMaterialDef::get_pattern_scale);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pattern_scale"), "set_pattern_scale", "get_pattern_scale");
+	ClassDB::bind_method(D_METHOD("set_roughness", "v"), &VoxelMaterialDef::set_roughness);
+	ClassDB::bind_method(D_METHOD("get_roughness"), &VoxelMaterialDef::get_roughness);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness"), "set_roughness", "get_roughness");
+	ClassDB::bind_method(D_METHOD("set_metallic", "v"), &VoxelMaterialDef::set_metallic);
+	ClassDB::bind_method(D_METHOD("get_metallic"), &VoxelMaterialDef::get_metallic);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "metallic"), "set_metallic", "get_metallic");
+	ClassDB::bind_method(D_METHOD("set_emission", "v"), &VoxelMaterialDef::set_emission);
+	ClassDB::bind_method(D_METHOD("get_emission"), &VoxelMaterialDef::get_emission);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission"), "set_emission", "get_emission");
+	ClassDB::bind_method(D_METHOD("set_hardness", "v"), &VoxelMaterialDef::set_hardness);
+	ClassDB::bind_method(D_METHOD("get_hardness"), &VoxelMaterialDef::get_hardness);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "hardness"), "set_hardness", "get_hardness");
+	ClassDB::bind_method(D_METHOD("set_albedo", "v"), &VoxelMaterialDef::set_albedo);
+	ClassDB::bind_method(D_METHOD("get_albedo"), &VoxelMaterialDef::get_albedo);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "albedo", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_albedo", "get_albedo");
+	ClassDB::bind_method(D_METHOD("set_normal", "v"), &VoxelMaterialDef::set_normal);
+	ClassDB::bind_method(D_METHOD("get_normal"), &VoxelMaterialDef::get_normal);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "normal", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_normal", "get_normal");
+}
+
+void VoxelMaterialSet::set_materials(const TypedArray<VoxelMaterialDef> &p_materials) {
+	for (int i = 0; i < materials.size(); i++) {
+		Ref<VoxelMaterialDef> old = materials[i];
+		if (old.is_valid()) old->disconnect("changed", callable_mp(this, &VoxelMaterialSet::_def_changed));
+	}
+	materials = p_materials;
+	for (int i = 0; i < materials.size(); i++) {
+		Ref<VoxelMaterialDef> def = materials[i];
+		if (def.is_valid()) def->connect("changed", callable_mp(this, &VoxelMaterialSet::_def_changed));
+	}
+	emit_changed();
+}
+
+void VoxelMaterialSet::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_materials", "v"), &VoxelMaterialSet::set_materials);
+	ClassDB::bind_method(D_METHOD("get_materials"), &VoxelMaterialSet::get_materials);
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "materials", PROPERTY_HINT_TYPE_STRING, "24/17:VoxelMaterialDef"), "set_materials", "get_materials");
+}

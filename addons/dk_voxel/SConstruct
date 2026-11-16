@@ -10,15 +10,17 @@ env = Environment()
 env["ARCOM"] = "${TEMPFILE('$AR $ARFLAGS $TARGET $SOURCES')}"
 SConscript(os.path.join("thirdparty", "godot-cpp", "SConstruct"), {"env": env, "customs": ["custom.py"], "api_version": "4.7"})
 
-# The mesher is the hot path: optimise it even in the editor (template_debug) library.
-env.Append(CXXFLAGS=["-O3"])
-env.VariantDir("build/obj", "src", duplicate=0)
+# The addon's sources, from the SConscript games share (it also appends the mesher's -O3). Only the
+# addon's own library adds entry.cpp, the GDExtension entry symbol a game replaces with its own; it goes through the same object variant dir so
+# its object does not land in src/.
+dk_sources, dk_include = SConscript("SConscript", {"env": env})
+env.Append(CPPPATH=[dk_include])
 suffix = env["suffix"].replace(".dev", "").replace(".universal", "")
-Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"],
-                          source=["build/obj/voxel_core.cpp", "build/obj/voxel_world.cpp"]))
+Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"], source=dk_sources + [File("build/obj/entry.cpp")]))
 
-# Core self-test: host toolchain only (voxel_core has no Godot dependency).
+# Core self-test: host toolchain only (volume/mesher have no Godot dependency).
 t = Environment()
-t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread"], LINKFLAGS=["-pthread"])
+t.Append(CPPPATH=["src"])
+t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread", "-ffp-contract=off"], LINKFLAGS=["-pthread"])
 t.VariantDir("build/test", "src", duplicate=0)
-Alias("selftest", t.Program("build/selftest", source=["build/test/voxel_core.cpp", "build/test/selftest.cpp"]))
+Alias("selftest", t.Program("build/selftest", source=["build/test/core/voxel_volume.cpp", "build/test/terrain/demo_terrain.cpp", "build/test/terrain/level_terrain.cpp", "build/test/core/voxel_mesher.cpp", "build/test/selftest.cpp"]))

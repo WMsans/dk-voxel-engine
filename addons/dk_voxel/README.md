@@ -13,25 +13,206 @@ godot --path ../.. -- --shot=/tmp/shot.png          # three staged screenshots +
 
 ## Using it
 
+One node, `VoxelWorld`; generators are `VoxelGenerator` resources. Set the properties, `add_child`,
+then `reset()`. Edits are main-thread calls; meshing runs on worker threads and edited chunks jump the
+queue.
+
 ```gdscript
 var world := VoxelWorld.new()
-world.material = my_shader_material          # see voxel_terrain.gdshader
+world.cell_size = 0.5                     # metres per voxel
+world.bounds_size = Vector3i(32, 8, 32)   # 16³-cell chunks from the origin; zero = endless
+world.generator = DemoTerrainGenerator.new()
+world.material_set = my_material_set      # a VoxelMaterialDef per material id
+world.material = my_shader_material       # see voxel_terrain.gdshader
+world.save_directory = "user://saves/slot1/overworld"   # empty = nothing reaches disk
 add_child(world)
-world.create(Vector3i(32, 8, 32), 0.5)       # size in 16-cell chunks, cell size in metres
-world.generate_terrain(7)                    # or build your own with the calls below
-world.set_material_hardness(6, 255)          # 255 = unbreakable
+world.reset()                             # rebuild with the current properties
 
-var r := world.dig_sphere(pos, 1.6, 1)       # power 1; r.removed = {material: m³}, r.volume
-world.build_sphere(pos, 1.6, 7)
-world.smooth_sphere(pos, 2.4, 0.6, 1)
-world.build_box(xf, half_extents, 7)         # sharp = true: exact edges and corners
-world.dig_cylinder(xf, radius, half_height, 9)
-var hit := world.raycast(from, dir, 14.0)    # {position, normal, material}; marches the voxels
+var viewer := VoxelViewer.new()           # terrain streams around this node, not the camera
+viewer.view_distance = 160.0              # metres
+viewer.vertical_view_distance = 96.0
+viewer.collision_distance = 40.0
+player.add_child(viewer)
 ```
 
-Properties: `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer`, `material`.
-The LOD viewer is the viewport's current camera. Edits are main-thread calls; meshing runs on worker
-threads and edited chunks jump the queue.
+Properties:
+
+- `cell_size` — metres per voxel, default 0.5.
+- `bounds_size` — the world in chunks from the origin. `Vector3i.ZERO` (the default) is endless: chunks
+  stream in around the viewers and unload behind them.
+- `generator` — a `VoxelGenerator`, the terrain generation profile; none means air. Two ship with the addon:
+  - `DemoTerrainGenerator` — procedural hills, caves and ore (`seed`, `height`); suits an endless world.
+  - `LevelTerrainGenerator` — a hand-made level from Blender (`level_path` to a `.dkvl`); see
+    [Hand-made levels](#hand-made-levels-from-blender). Size a bounded world from `get_level_size()`;
+    `get_spawn_point()` is the level's `Spawn` object.
+
+  Swap profiles by assigning another resource and calling `reset()` (the demo's P key does this).
+- `material_set` — a `VoxelMaterialSet`: one `VoxelMaterialDef` per material id, with `albedo` and `normal`
+  textures, colour, pattern, roughness, metallic, emission and hardness. `albedo` and `normal` take ordinary
+  image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
+  game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
+  albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
+  `demo/textures/` plus `demo/main.gd` for the working example. `pattern_scale` is tiles per metre. A
+  material with no textures gets a built-in grain and a flat normal. The shader's `normal_strength`
+  uniform scales the normal map if it reads too strong at a given tiling. Ids run to 32; a voxel carrying a
+  higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
+  set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey
+  default. Hardness 255 is unbreakable and an erase needs `power >= hardness`.
+- `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
+- `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
+- `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
+  (0 = cores − 2) and LOD/collision tuning.
+
+Changing `cell_size`, `bounds_size` or `generator` takes effect on the next `reset()`; `material_set`
+applies immediately, to the hardness table and the shader uniforms.
+
+Every `VoxelViewer` registers with the `VoxelWorld` nodes that share its `World3D`; together they decide
+what is loaded, at which LOD, and with collision. With no viewer the active camera acts as one. In the
+editor nothing streams and nothing is meshed.
+
+```gdscript
+var r := world.dig_sphere(pos, 1.6, 1)     # power; r.removed = {material: m³}, r.volume
+world.build_sphere(pos, 1.6, 7)
+world.smooth_sphere(pos, 2.4, 0.6, 1)
+world.build_box(xf, half_extents, 7)       # sharp = true: exact edges and corners
+world.dig_cylinder(xf, radius, half_height, 9)
+var hit := world.raycast(from, dir, 14.0)  # {position, normal, material}; marches the voxels
+```
+
+### Reacting to the world
+
+`terrain_edited(aabb, result)` fires once per edit that changed something; `aabb` is the edited shape's
+box in world space and `result` is the dictionary the edit method returned (`removed` per material id in
+m³, `volume`, `changed`). `is_area_ready(aabb, need_collision = true)` is false until every chunk under
+`aabb` (global) is loaded and meshed at its LOD, and, with `need_collision`, has a collision body unless
+it has no surface — hold a spawn, a teleport or a test on it instead of guessing frame counts. It is
+also false while there is no viewer and no camera, since nothing is streaming. Bodies only exist at LOD0,
+so an area reaching past the collision radius (clamped to the LOD1 band) needs `need_collision = false`.
+
+```gdscript
+world.terrain_edited.connect(_on_terrain_edited)   # audio, AI, quests, debris
+while not world.is_area_ready(AABB(spawn, Vector3(32, 32, 32))):
+	await get_tree().process_frame
+```
+
+### Saving
+
+Edited chunks are written to `save_directory` when they unload and on `save()`; freeing the world flushes
+them first. The file header holds the format version, `cell_size` and the generator's class name, and a
+mismatch is rejected with an error (the chunk falls back to the generator). Seed and other generator
+settings are not checked: give each world or seed its own directory. `reset()` never deletes files.
+
+## Hand-made levels from Blender
+
+Built the way Donkey Kong Bananza builds its stages: artist meshes are voxelized offline into
+signed-distance grids, one per part, and a level is an ordered list of operations on those parts. Paste
+adds a part and overwrites the material inside it. Erase carves the part out. Paint recolours solid voxels
+inside the part without changing the shape, like Bananza's `VoxelMaterialChangeArea`.
+
+1. Model the level in Blender, one closed mesh per part. Optional object custom properties: `dk_op`
+   (`paste` / `erase` / `paint`), `dk_priority` (lowest applies first; ties go by name), `dk_material`
+   (material id; otherwise the first material slot's `dk_material` property is used), and `dk_skip`. An
+   object named `Spawn` marks the start point.
+2. Export: `blender -b level.blend --python addons/dk_voxel/tools/blender/dkv_export.py -- level.dkvl --cell 0.5`.
+   Blender's Z-up axes become Godot's Y-up, and the level is shifted so it starts at the origin.
+3. In Godot: `LevelTerrainGenerator` with `level_path`, plus a bounded `VoxelWorld` of
+   `ceil(get_level_size() / (16 * cell_size))` chunks. The file is read again on every `reset()`.
+
+`demo/levels/src/build_mini_level.py` builds the demo's `mini_level.blend` from script: a floating island,
+a peak with a tunnel and gold veins, a hollow tower, and a crater ringed by crystals. The format is
+documented in `src/terrain/level_terrain.h`. When exporting a game, add `*.dkvl` to the export preset's
+non-resource include filter.
+
+## Writing a generator for your game
+
+Generators are C++: they run on worker threads and must not touch Godot. Compile the addon's sources into
+your game's own GDExtension (do not enable the addon's `dk_voxel.gdextension` as well — your library
+replaces it).
+
+1. Add the addon next to your project as a submodule, so the version is pinned:
+
+   ```sh
+   git submodule add <addon-repo-url> addons/dk_voxel
+   ```
+
+2. Pull the addon's source list into your `SConstruct`, after godot-cpp has set up `env`:
+
+   ```python
+   dk_sources, dk_include = SConscript("addons/dk_voxel/SConscript", {"env": env})
+   env.Append(CPPPATH=[dk_include])
+   env.SharedLibrary("bin/mygame", source=dk_sources + env.Glob("src/*.cpp"))
+   ```
+
+   `dk_sources` are the addon's library `.cpp` files (`selftest.cpp` is a host-side test and is not in
+   the list): they compile with your `env` and flags, and their objects land in
+   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, and headers are included by folder:
+   - `core/` is what every game reuses unchanged. The Godot node and its parts are `core/voxel_world.h`,
+     `core/voxel_resources.h` (`VoxelGenerator`, `VoxelViewer`), `core/voxel_materials.h`
+     (`VoxelMaterialDef`, `VoxelMaterialSet`) and `core/register_types.h`. The Godot-free engine is
+     `core/voxel_generator.h`, `core/voxel_volume.h`, `core/voxel_types.h` and `core/noise.h`, the only
+     files the host-side self-test compiles.
+   - `terrain/` holds the shipped generation profiles: `demo_terrain.*` (procedural), `level_terrain.*`
+     (Blender levels), and their resources in `terrain_resources.h`. Your own generators belong beside
+     them, or in your game's tree.
+
+   The addon's own entry point (`src/entry.cpp`, which
+   defines `dk_voxel_library_init`) is deliberately not in the list: your game's library supplies its own
+   entry symbol.
+
+3. Subclass `VoxelGenerator` (Godot-facing) and return your `dkv::Generator` from `create_generator()`.
+   The core generator runs on worker threads, so it must be `const`, thread-safe and deterministic in its
+   settings and block origin — an unloaded chunk is regenerated exactly. A flat world, solid below y = 0:
+
+   ```cpp
+   #include "core/voxel_resources.h"
+
+   struct Flat : dkv::Generator {
+   	void generate_block(const int origin[3], float, dkv::Voxel out[512]) const override {
+   		for (int z = 0; z < 8; z++)
+   			for (int y = 0; y < 8; y++)
+   				for (int x = 0; x < 8; x++)
+   					out[(z << 6) | (y << 3) | x] =
+   						origin[1] + y < 0 ? dkv::Voxel{255, 3} : dkv::Voxel{0, 0};
+   	}
+   };
+
+   class FlatGenerator : public VoxelGenerator {
+   	GDCLASS(FlatGenerator, VoxelGenerator)
+   public:
+   	std::shared_ptr<const dkv::Generator> create_generator() const override { return std::make_shared<Flat>(); }
+   protected:
+   	static void _bind_methods() {}
+   };
+   ```
+
+   `origin` is the 8³ block's origin in cell coordinates; density 0 is air, 255 is solid, and the second
+   byte is the material id. Then `world.generator = FlatGenerator.new()`, as for any resource.
+
+   Two things in the addon are there to be copied rather than inherited: `core/noise.h` gives you `hash3`,
+   `noise3`, `fbm` and a `ColumnCache` keyed on the settings and the column origin, so a per-block heightmap
+   cache is correct no matter what order the engine fills blocks in; and `terrain/demo_terrain.cpp` shows a full
+   generator written rule by rule — height, overhangs, caves, surface layers, ore — with every constant named
+   at the top of the file. Its material ids are `dkv::DemoMaterial` in `terrain/demo_terrain.h`, in the same order as
+   the demo's `MATERIALS` array.
+
+4. Register the addon's classes and yours from your module initializer:
+
+   ```cpp
+   #include "core/register_types.h"
+   #include "terrain/terrain_resources.h" // only if you use the shipped profiles
+   #include <godot_cpp/godot.hpp>
+
+   using namespace godot;
+
+   static void init(ModuleInitializationLevel level) {
+   	if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
+   	dk_voxel_register_types();
+   	dk_voxel_register_terrain(); // DemoTerrainGenerator, LevelTerrainGenerator
+   	GDREGISTER_CLASS(FlatGenerator);
+   }
+   ```
+
+   Then `obj.register_initializer(init)` in your `*_library_init`, as in the addon's `src/entry.cpp`.
 
 ## What the game does, and how it was established
 
@@ -63,3 +244,8 @@ octree builder at `0x130a0`), and how seams between chunks of different LOD are 
 - A normal-cone test stands in for the game's topology penalties when collapsing.
 - Collision is the LOD0 mesh as a Jolt trimesh per chunk, near the camera only.
 - Surface patterns come from one seamless 3D noise texture instead of authored triplanar sets.
+- The world is good to about 8 km from the origin. Stock single-precision Godot jitters the camera, the
+  player and physics further out whatever the voxel code does. Mesh and collision vertices are relative to
+  the chunk origin and core voxel coordinates are `int32`, so the upgrade path is a `precision=double`
+  build of Godot and godot-cpp and nothing else. Origin shifting was considered and rejected: every game
+  would have to cooperate with it.

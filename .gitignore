@@ -5,3 +5,8 @@ addons/dk_voxel/thirdparty/
 addons/dk_voxel/build/
 addons/dk_voxel/bin/
 .sconsign.dblite
+
+# Blender autosave backups
+*.blend[1-9]
+*.blend[12][0-9]
+*.blend3[0-2]

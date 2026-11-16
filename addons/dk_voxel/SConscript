@@ -1,0 +1,48 @@
+# Shared source list for the dk_voxel addon, for games that compile it into their own GDExtension.
+#
+# From a game's SConstruct, after godot-cpp has set up `env`:
+#
+#     dk_sources, dk_include = SConscript("addons/dk_voxel/SConscript", {"env": env})
+#     env.Append(CPPPATH=[dk_include])
+#     env.SharedLibrary("bin/mygame", source=dk_sources + env.Glob("src/*.cpp"))
+#
+# `dk_sources` are the addon's .cpp files as SCons nodes in the addon's `build/obj` VariantDir: they
+# compile with the game's `env` and flags, but their objects land next to the addon, not in the game's
+# build tree. `dk_include` is the addon's `src/`: headers are included by folder, `core/` (what every game
+# reuses unchanged: the node, streaming, saving, materials, register_types.h) and `terrain/` (the shipped
+# generation profiles, which a game adds to or replaces). The addon's own GDExtension entry symbol is `src/entry.cpp`,
+# which is deliberately left out: the game's library provides its own. The addon's own SConstruct adds it.
+# The SConscript also appends `-O3` to the caller's `env`, so every source built with that `env` is
+# affected, the game's own sources included. godot-cpp appends its `-O2`/`-O0` to `CCFLAGS`, which SCons
+# puts after `CXXFLAGS` on the command line, so the effective level is godot-cpp's, not this one.
+Import("env")
+
+# The mesher is the hot path, so this appends -O3 even in a template_debug build. godot-cpp's own -O2/-O0
+# goes on CCFLAGS, which SCons puts after CXXFLAGS, so the effective level is godot-cpp's; and because
+# the flag lands on the caller's `env`, it also applies to the game's own sources, not only the addon's.
+env.Append(CXXFLAGS=["-O3"])
+# Generators must give bit-identical terrain on every machine: an endless world regenerates unloaded chunks
+# next to saved ones. Fused multiply-add (clang's default contraction, or any -march with FMA) changes the
+# noise's rounding, so contraction is off. MSVC does not contract unless asked.
+if not env.get("is_msvc", False):
+	env.Append(CXXFLAGS=["-ffp-contract=off"])
+
+here = Dir(".")
+src = here.Dir("src")
+obj = here.Dir("build/obj")
+env.VariantDir(obj, src, duplicate=0)
+sources = [obj.File(name) for name in (
+	"core/register_types.cpp",
+	"core/voxel_chunks.cpp",
+	"core/voxel_materials.cpp",
+	"core/voxel_mesher.cpp",
+	"core/voxel_resources.cpp",
+	"core/voxel_save.cpp",
+	"core/voxel_stream.cpp",
+	"core/voxel_volume.cpp",
+	"core/voxel_world.cpp",
+	"terrain/demo_terrain.cpp",
+	"terrain/level_terrain.cpp",
+	"terrain/terrain_resources.cpp",
+)]
+Return("sources", "src")
