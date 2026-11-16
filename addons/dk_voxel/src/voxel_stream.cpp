@@ -54,7 +54,7 @@ void update_viewers(WorldState &st, VoxelWorld &world) {
 			changed = true;
 	if (changed) {
 		st.active_viewers = std::move(found);
-		st.need_scan = true;
+		st.need_scan = st.need_stream = true;
 	} else {
 		for (size_t i = 0; i < found.size(); i++) st.active_viewers[i].pos = found[i].pos;
 	}
@@ -204,12 +204,14 @@ void stream_endless(WorldState &st) {
 void scan(WorldState &st) {
 	const float cs = dkv::CHUNK * st.vol->cell, hyst = cs * 0.5f;
 
-	if (!st.vol->bounded) stream_endless(st);
+	if (!st.vol->bounded && st.need_stream) stream_endless(st);
+	st.need_stream = false;
 
 	std::vector<dkv::WorldState::Job> add;
 	for (int i = 0; i < (int)st.chunks.size(); i++) {
 		dkv::WorldState::Chunk &c = st.chunks[i];
-		if (c.gen_queued || !st.vol->has_chunk(c.key.x, c.key.y, c.key.z)) continue;
+		// Not queued = generated: entries start queued and are erased with their volume chunk, so no locked lookup.
+		if (c.gen_queued) continue;
 		Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
 		float d = 0.0f;
 		bool in_mesh = st.vol->bounded, want_coll = false;
@@ -227,7 +229,6 @@ void scan(WorldState &st) {
 			if (c.lod < 0) continue; // margin ring: loaded so inner chunks have neighbours, never meshed
 			want_coll = false;
 		}
-		if (!st.vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
 		int want;
 		if (!in_mesh) {
 			want = c.lod; // keep what is on screen until the chunk is unloaded
@@ -239,6 +240,8 @@ void scan(WorldState &st) {
 		bool stale = c.applied_version != c.version;
 		if (!stale && c.lod == want && (c.collision || !want_coll)) continue;
 		if (c.queued && c.queued_version == c.version) continue;
+		// Last: 27 locked lookups, so only for the few chunks that would queue a job, never all loaded ones.
+		if (!st.vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
 		c.queued = true;
 		c.queued_version = c.version;
 		bool urgent = stale && c.lod >= 0; // an edit to something already on screen

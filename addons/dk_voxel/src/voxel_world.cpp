@@ -49,7 +49,7 @@ void VoxelWorld::ensure_volume() {
 		for (dkv::WorldState::Chunk &c : st->chunks) c.version++;
 	}
 	dkv::apply_hardness(*st);
-	st->need_scan = true;
+	st->need_scan = st->need_stream = true;
 }
 
 // The chunk list entry for a chunk coordinate, or null when it is not loaded (endless) or out of bounds.

@@ -107,6 +107,7 @@ struct WorldState {
 
 	uint64_t generation = 0; // bumped by reset(): results queued before it are never applied
 	bool need_scan = true;
+	bool need_stream = true; // endless: viewers moved, so load/unload; a finished job alone only needs the mesh pass
 	int64_t stat_tris = 0;
 	int stat_meshes = 0, stat_bodies = 0, stat_jobs = 0;
 	double stat_ms = 0;
