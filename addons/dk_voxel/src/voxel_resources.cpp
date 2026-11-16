@@ -1,6 +1,6 @@
 #include "voxel_resources.h"
 
-#include "demo_generator.h"
+#include "demo_terrain.h"
 
 #include <godot_cpp/core/class_db.hpp>
 

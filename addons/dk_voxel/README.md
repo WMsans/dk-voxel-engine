@@ -117,8 +117,9 @@ replaces it).
 
    `dk_sources` are the addon's library `.cpp` files (`selftest.cpp` is a host-side test and is not in
    the list): they compile with your `env` and flags, and their objects land in
-   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h`,
-   `voxel_core.h` and `voxel_resources.h` live. The addon's own entry point (`src/entry.cpp`, which
+   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h` and
+   `voxel_resources.h` live and the Godot-free core sits under `core/` (`core/voxel_generator.h`,
+   `core/voxel_volume.h`, `core/voxel_types.h`). The addon's own entry point (`src/entry.cpp`, which
    defines `dk_voxel_library_init`) is deliberately not in the list: your game's library supplies its own
    entry symbol.
 
@@ -150,6 +151,13 @@ replaces it).
 
    `origin` is the 8³ block's origin in cell coordinates; density 0 is air, 255 is solid, and the second
    byte is the material id. Then `world.generator = FlatGenerator.new()`, as for any resource.
+
+   Two things in the addon are there to be copied rather than inherited: `core/noise.h` gives you `hash3`,
+   `noise3`, `fbm` and a `ColumnCache` keyed on the settings and the column origin, so a per-block heightmap
+   cache is correct no matter what order the engine fills blocks in; and `demo_terrain.cpp` shows a full
+   generator written rule by rule — height, overhangs, caves, surface layers, ore — with every constant named
+   at the top of the file. Its material ids are `dkv::DemoMaterial` in `demo_terrain.h`, in the same order as
+   the demo's `MATERIALS` array.
 
 4. Register the addon's classes and yours from your module initializer:
 

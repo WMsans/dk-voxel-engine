@@ -1,7 +1,8 @@
 // Core self-test: scons selftest && build/selftest
-#include "demo_generator.h"
-#include "core/voxel_volume.h"
+#include "demo_terrain.h"
+#include "core/noise.h"
 #include "core/voxel_generator.h"
+#include "core/voxel_volume.h"
 
 #include <atomic>
 #include <chrono>
@@ -248,6 +249,39 @@ int main() {
 		bool all = v.chunk_count() == (size_t)N;
 		for (int i = 0; i < N; i++) all &= v.has_chunk(i % 8 - 4, (i / 8) % 8 - 4, (i / 64) % 4 - 2);
 		CHECK(all, "concurrent fill lost chunks: %zu", v.chunk_count());
+	}
+
+	printf("column cache\n");
+	{
+		ColumnCache<float, 8, 8> c;
+		bool fresh = false;
+		float *a = c.acquire(1, 0, 0, fresh);
+		CHECK(fresh, "an empty cache reports fresh");
+		for (int i = 0; i < 64; i++) a[i] = (float)i;
+		float *b = c.acquire(1, 0, 0, fresh);
+		CHECK(!fresh && b[63] == 63.0f, "the same key hits");
+		c.acquire(2, 0, 0, fresh); // another generator's settings
+		CHECK(fresh, "a different settings tag misses");
+		c.acquire(1, 8, 0, fresh); // another column, same settings
+		CHECK(fresh, "a different origin misses");
+		c.acquire(1, 0, 0, fresh);
+		CHECK(fresh, "a key that was overwritten is not served stale");
+		ColumnCache<float, 8, 8> other;
+		CHECK(other.acquire(1, 0, 0, fresh) != nullptr && fresh, "a second cache on the same thread starts cold");
+	}
+
+	printf("demo material ids\n");
+	{
+		DemoTerrain g; g.seed = 1234; g.height = 32.0f;
+		Volume v(4, 4, 4, 0.5f);
+		v.fill_all(&g, 4);
+		bool known = true;
+		for (int i = 0; i < 4; i++)
+			for (int y = 0; y < 64; y++) {
+				uint8_t m = v.get(i * 16 + 8, y, 8).m;
+				known &= m == 0 || (m >= GRASS && m <= CRYSTAL);
+			}
+		CHECK(known, "generated terrain uses only named materials");
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

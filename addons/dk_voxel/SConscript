@@ -28,7 +28,7 @@ env.VariantDir(obj, src, duplicate=0)
 sources = [obj.File(name) for name in (
 	"core/voxel_mesher.cpp",
 	"core/voxel_volume.cpp",
-	"demo_generator.cpp",
+	"demo_terrain.cpp",
 	"register_types.cpp",
 	"voxel_chunks.cpp",
 	"voxel_materials.cpp",

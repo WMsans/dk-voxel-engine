@@ -22,4 +22,4 @@ Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"], sourc
 t = Environment()
 t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread"], LINKFLAGS=["-pthread"])
 t.VariantDir("build/test", "src", duplicate=0)
-Alias("selftest", t.Program("build/selftest", source=["build/test/core/voxel_volume.cpp", "build/test/demo_generator.cpp", "build/test/core/voxel_mesher.cpp", "build/test/selftest.cpp"]))
+Alias("selftest", t.Program("build/selftest", source=["build/test/core/voxel_volume.cpp", "build/test/demo_terrain.cpp", "build/test/core/voxel_mesher.cpp", "build/test/selftest.cpp"]))
