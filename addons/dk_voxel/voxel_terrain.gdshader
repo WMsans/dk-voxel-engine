@@ -3,7 +3,8 @@
 // Albedo and normal come from one Texture2DArray each, layer = material id, triplanar-projected in world
 // space, so nothing stretches on cliffs or cave ceilings, no UVs are needed, and the projection runs on
 // across chunk borders (mesh vertices are chunk-relative, so VERTEX alone would restart the texture at
-// every chunk).
+// every chunk). The roughness and AO maps are projected the same way: roughness multiplies the material's
+// scalar roughness, AO multiplies the baked per-vertex AO in COLOR.a.
 // The two colours are a tint ramp over the albedo: set both to white to show a texture unmodified.
 shader_type spatial;
 
@@ -13,6 +14,9 @@ const int MATERIAL_SLOTS = 32;
 uniform sampler2DArray albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
 // No source_color here: a normal map is linear data, and an sRGB decode would bend it.
 uniform sampler2DArray normal_tex : filter_linear_mipmap, repeat_enable;
+// Data maps, so no source_color either: 1.0 leaves the scalar/vertex value untouched.
+uniform sampler2DArray roughness_tex : filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray ao_tex : filter_linear_mipmap, repeat_enable;
 uniform vec3 color_a[32] : source_color;
 uniform vec3 color_b[32] : source_color;
 uniform vec4 params[32]; // x = tiles per metre, y = roughness, z = metallic, w = emission
@@ -41,6 +45,14 @@ vec4 tri_albedo(int id, vec3 p, vec3 w, float scale) {
 	return texture(albedo_tex, vec3(p.zy * scale, layer)) * w.x
 			+ texture(albedo_tex, vec3(p.xz * scale, layer)) * w.y
 			+ texture(albedo_tex, vec3(p.xy * scale, layer)) * w.z;
+}
+
+// Single-channel maps: one fetch per projection, averaged with the same weights as the albedo.
+float tri_grey(sampler2DArray tex, int id, vec3 p, vec3 w, float scale) {
+	float layer = float(id);
+	return texture(tex, vec3(p.zy * scale, layer)).r * w.x
+			+ texture(tex, vec3(p.xz * scale, layer)).r * w.y
+			+ texture(tex, vec3(p.xy * scale, layer)).r * w.z;
 }
 
 // Decodes the three projections and swizzles each tangent-space normal back into world space.
@@ -74,9 +86,14 @@ void fragment() {
 	vec3 nb = ia == ib ? na : tri_normal(ib, vpos, n, w, pb.x);
 	NORMAL = normalize((VIEW_MATRIX * vec4(mix(n, normalize(mix(na, nb, t)), normal_strength), 0.0)).xyz); // back to view space
 
-	float ao = COLOR.a;
+	float ra = tri_grey(roughness_tex, ia, vpos, w, pa.x);
+	float rb = ia == ib ? ra : tri_grey(roughness_tex, ib, vpos, w, pb.x);
+	float oa = tri_grey(ao_tex, ia, vpos, w, pa.x);
+	float ob = ia == ib ? oa : tri_grey(ao_tex, ib, vpos, w, pb.x);
+
+	float ao = COLOR.a * mix(oa, ob, t);
 	ALBEDO = albedo * mix(0.7, 1.0, ao);
-	ROUGHNESS = mix(pa.y, pb.y, t);
+	ROUGHNESS = clamp(mix(pa.y * ra, pb.y * rb, t), 0.0, 1.0);
 	METALLIC = mix(pa.z, pb.z, t);
 	EMISSION = albedo * mix(pa.w, pb.w, t);
 	AO = ao;

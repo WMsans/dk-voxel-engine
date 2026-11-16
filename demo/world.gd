@@ -1,7 +1,7 @@
 extends VoxelWorld
 ## The demo world node: material set, terrain profile, ruins, and the debris and bombs of an edit.
 
-const MATERIALS := [ # name, albedo, normal, tiles per metre, roughness, metallic, emission, hardness
+const MATERIALS := [ # name, albedo, normal/roughness/AO, tiles per metre, roughness factor, metallic, emission, hardness
 	["Default", "soil", "soil", 0.5, 0.9, 0.0, 0.0, 0],
 	["Grass", "grass", "grass", 0.22, 0.95, 0.0, 0.0, 0],
 	["Soil", "soil", "soil", 0.3, 0.95, 0.0, 0.0, 0],
@@ -87,6 +87,8 @@ func _make_material_set() -> VoxelMaterialSet:
 		# Every surface is a real image file; tints are baked into the file by demo/textures/make_textures.py.
 		d.albedo = load("res://demo/textures/%s_albedo.png" % m[1])
 		d.normal = load("res://demo/textures/%s_normal.png" % m[2])
+		d.roughness_map = load("res://demo/textures/%s_roughness.png" % m[2])
+		d.ao_map = load("res://demo/textures/%s_ao.png" % m[2])
 		d.color_a = Color.WHITE # leave the albedo as authored: the tint ramp stays out of the way
 		d.color_b = Color.WHITE
 		d.pattern_scale = m[3]

@@ -173,6 +173,10 @@ func _initialize() -> void:
 	tex_world.material_set = tex_set
 	var packed: Texture2DArray = shader_mat.get_shader_parameter("albedo_tex")
 	check(packed != null and packed.get_layers() == 32, "albedo packs 32 layers (%s)" % [packed])
+	var rough_packed: Texture2DArray = shader_mat.get_shader_parameter("roughness_tex")
+	var ao_packed: Texture2DArray = shader_mat.get_shader_parameter("ao_tex")
+	check(rough_packed != null and rough_packed.get_layers() == 32 and ao_packed != null and ao_packed.get_layers() == 32,
+			"roughness and AO pack 32 layers each (%s, %s)" % [rough_packed, ao_packed])
 	# get_layer_data() needs a renderer that keeps image data; --headless uses the dummy driver, which does
 	# not. When it is readable the layer's pixels are checked; when it is not, the array's size and identity
 	# still prove the packing ran. Task 7's --shot run is the visual proof of the pixels.
@@ -181,6 +185,9 @@ func _initialize() -> void:
 	if can_read:
 		var layer0 := packed.get_layer_data(0)
 		check(layer0.get_pixel(0, 0).r > 0.9 and layer0.get_pixel(0, 0).g < 0.1, "layer 0 is the def's own texture")
+		# Unset maps must be white, so the scalar roughness and the baked voxel AO keep the whole say.
+		check(rough_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99 and ao_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99,
+				"a def without maps packs flat 1.0 roughness and AO")
 	else:
 		check(packed.get_width() == 256 and packed.get_height() == 256, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
 
@@ -196,6 +203,9 @@ func _initialize() -> void:
 	else:
 		check(packed != null and packed != packed_before, "editing a def's texture repacks the arrays")
 	packed_before = packed
+	var rough_before := rough_packed
+	def0.roughness_map = ImageTexture.create_from_image(green_img)
+	check(shader_mat.get_shader_parameter("roughness_tex") != rough_before, "editing a def's roughness map repacks the arrays")
 	var def0b := VoxelMaterialDef.new()
 	def0b.albedo = albedo_tex
 	var swapped: Array[VoxelMaterialDef] = [def0b]

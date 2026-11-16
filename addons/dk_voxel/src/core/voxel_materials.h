@@ -32,6 +32,8 @@ class VoxelMaterialDef : public Resource {
 	int hardness = 0;
 	Ref<Texture2D> albedo; // null = the built-in grain
 	Ref<Texture2D> normal; // null = flat
+	Ref<Texture2D> roughness_map; // null = 1.0, so the scalar `roughness` alone applies
+	Ref<Texture2D> ao_map; // null = 1.0, so the baked voxel AO alone applies
 
 public:
 	void set_name(const String &p_name) { name = p_name; emit_changed(); }
@@ -54,6 +56,10 @@ public:
 	Ref<Texture2D> get_albedo() const { return albedo; }
 	void set_normal(const Ref<Texture2D> &p_texture) { normal = p_texture; emit_changed(); }
 	Ref<Texture2D> get_normal() const { return normal; }
+	void set_roughness_map(const Ref<Texture2D> &p_texture) { roughness_map = p_texture; emit_changed(); }
+	Ref<Texture2D> get_roughness_map() const { return roughness_map; }
+	void set_ao_map(const Ref<Texture2D> &p_texture) { ao_map = p_texture; emit_changed(); }
+	Ref<Texture2D> get_ao_map() const { return ao_map; }
 
 protected:
 	static void _bind_methods();
@@ -83,8 +89,8 @@ namespace dkv {
 Ref<VoxelMaterialDef> material_def(const Ref<VoxelMaterialSet> &set, int id);
 // Copies the set's hardness table into the volume.
 void apply_hardness(WorldState &st);
-// Packs albedo and normal into one Texture2DArray each (layer = material id) and pushes every uniform the
-// terrain shader reads: albedo_tex, normal_tex, color_a, color_b, params.
+// Packs each of albedo, normal, roughness and AO into one Texture2DArray (layer = material id) and pushes every
+// uniform the terrain shader reads: albedo_tex, normal_tex, roughness_tex, ao_tex, color_a, color_b, params.
 void apply_material_set(WorldState &st);
 
 } // namespace dkv

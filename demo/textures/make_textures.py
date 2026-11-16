@@ -3,6 +3,7 @@
 
 Every texture the demo shows is a real image file at TEXTURE_ARRAY_SIZE (256) RGBA8, so packing is a straight
 copy and the shader's two colours stay white. Tints are baked here, never applied at run time.
+Roughness and AO are data maps: copied straight through, no tint and no sRGB encode.
 
     python3 demo/textures/make_textures.py /path/to/voxel-everything/assets/materials
 """
@@ -53,4 +54,6 @@ for name, (asset, tint, gain) in MAP.items():
 	linear = srgb_to_linear(srgb) * np.array(tint, np.float32) * gain
 	save(f"{name}_albedo.png", linear_to_srgb(linear))
 	save(f"{name}_normal.png", load("normal", asset))
-	print(f"{name}: {asset} basecolor + normal")
+	save(f"{name}_roughness.png", load("roughness", asset))
+	save(f"{name}_ao.png", load("ambientOcclusion", asset))
+	print(f"{name}: {asset} basecolor + normal + roughness + ao")
