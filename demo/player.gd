@@ -30,7 +30,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		match e.keycode:
 			KEY_ESCAPE: Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 			KEY_V: fly = not fly
-			KEY_F: world.throw_bomb(cam.global_position, -cam.global_basis.z)
+			KEY_F: world.throw_bomb(cam.global_position, cam.global_basis.z)
 			KEY_E: _place_block()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5: build_mat = BUILD_KEYS[e.keycode - KEY_1]
 

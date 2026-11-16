@@ -1,9 +1,9 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene format=3 uid="uid://dtf4r61y1sm6k"]
 
-[ext_resource type="Script" path="res://demo/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://demo/world.gd" id="2_world"]
-[ext_resource type="Script" path="res://demo/player.gd" id="3_player"]
-[ext_resource type="Script" path="res://demo/hud.gd" id="4_hud"]
+[ext_resource type="Script" uid="uid://ce16ebuvigfyl" path="res://demo/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://dp875x46jg5ke" path="res://demo/world.gd" id="2_world"]
+[ext_resource type="Script" uid="uid://d35teojhu51ei" path="res://demo/player.gd" id="3_player"]
+[ext_resource type="Script" uid="uid://nc5uhbtmsxbw" path="res://demo/hud.gd" id="4_hud"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 sky_top_color = Color(0.16, 0.36, 0.78, 1)
@@ -33,21 +33,21 @@ fog_density = 0.0028
 fog_aerial_perspective = 0.6
 fog_sky_affect = 0.0
 adjustment_enabled = true
-adjustment_saturation = 1.25
 adjustment_contrast = 1.08
+adjustment_saturation = 1.25
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
 height = 1.7
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=1780926282]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1399757200]
 environment = SubResource("Environment_demo")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
-rotation = Vector3(-0.733038, -0.610865, 0)
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1912506566]
+transform = Transform3D(0.8191522, 0.38379726, -0.42625028, 0, 0.743145, 0.6691304, 0.5735762, -0.5481196, 0.60874885, 0, 0, 0)
 light_color = Color(1, 0.94, 0.82, 1)
 light_energy = 1.3
 shadow_enabled = true
@@ -55,41 +55,41 @@ shadow_bias = 0.04
 shadow_normal_bias = 1.4
 directional_shadow_max_distance = 160.0
 
-[node name="World" type="VoxelWorld" parent="."]
+[node name="World" type="VoxelWorld" parent="." unique_id=1571118196]
 script = ExtResource("2_world")
 
-[node name="Player" type="CharacterBody3D" parent="."]
+[node name="Player" type="CharacterBody3D" parent="." unique_id=1897108621]
 floor_max_angle = 0.872665
 floor_snap_length = 0.35
 script = ExtResource("3_player")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=555240458]
 shape = SubResource("CapsuleShape3D_player")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
-position = Vector3(0, 0.65, 0)
+[node name="Camera3D" type="Camera3D" parent="Player" unique_id=327484659]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.65, 0)
 current = true
 fov = 80.0
 far = 600.0
 
-[node name="Lamp" type="OmniLight3D" parent="Player/Camera3D"]
+[node name="Lamp" type="OmniLight3D" parent="Player/Camera3D" unique_id=1504684919]
 light_color = Color(1, 0.85, 0.65, 1)
 light_energy = 0.7
 omni_range = 14.0
 
-[node name="Viewer" type="VoxelViewer" parent="Player"]
-position = Vector3(0, 0.9, 0)
+[node name="Viewer" type="VoxelViewer" parent="Player" unique_id=1579860662]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1328889621]
 script = ExtResource("4_hud")
 
-[node name="Status" type="Label" parent="HUD"]
+[node name="Status" type="Label" parent="HUD" unique_id=941977135]
 offset_left = 12.0
 offset_top = 8.0
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 5
 
-[node name="Crosshair" type="Label" parent="HUD"]
+[node name="Crosshair" type="Label" parent="HUD" unique_id=1650811609]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
