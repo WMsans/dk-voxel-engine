@@ -41,10 +41,16 @@ Properties:
 - `bounds_size` — the world in chunks from the origin. `Vector3i.ZERO` (the default) is endless: chunks
   stream in around the viewers and unload behind them.
 - `generator` — a `VoxelGenerator`; none means air. `DemoTerrainGenerator` has `seed` and `height`.
-- `material_set` — a `VoxelMaterialSet`: one `VoxelMaterialDef` per material id, with colour, pattern,
-  roughness, metallic, emission and hardness. In a non-empty set an id without a def reads as entry 0;
-  with no set, or an empty one, every id gets a zero-hardness grey default. Hardness 255 is unbreakable
-  and an erase needs `power >= hardness`.
+- `material_set` — a `VoxelMaterialSet`: one `VoxelMaterialDef` per material id, with `albedo` and `normal`
+  textures, colour, pattern, roughness, metallic, emission and hardness. `albedo` and `normal` take ordinary
+  image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
+  game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
+  albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
+  `demo/textures/` plus `demo/main.gd` for the working example. `pattern_scale` is tiles per metre. A
+  material with no textures gets a built-in grain and a flat normal. Ids run to 32; a voxel carrying a
+  higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
+  set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey
+  default. Hardness 255 is unbreakable and an erase needs `power >= hardness`.
 - `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
 - `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads

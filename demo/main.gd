@@ -109,6 +109,14 @@ func _make_material_set() -> VoxelMaterialSet:
 		d.emission = m[6]
 		d.hardness = m[7]
 		defs.append(d)
+	# Two real texture files on rock: this is the whole game-side job. The colours above tint the texture, so
+	# rock's are lightened to near-white here to let the image show.
+	var rock := defs[3]
+	rock.albedo = load("res://demo/textures/rock_albedo.png")
+	rock.normal = load("res://demo/textures/rock_normal.png")
+	rock.color_a = Color(0.87, 0.86, 0.88)
+	rock.color_b = Color(1.0, 0.98, 0.95)
+	rock.pattern_scale = 0.5 # tiles per metre
 	set.materials = defs
 	return set
 
@@ -141,19 +149,9 @@ func _ground(at: Vector3) -> Vector3:
 
 
 func _make_terrain_material() -> ShaderMaterial:
-	var noise := FastNoiseLite.new()
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	noise.frequency = 0.045
-	noise.fractal_octaves = 3
-	var tex := NoiseTexture3D.new()
-	tex.width = 64
-	tex.height = 64
-	tex.depth = 64
-	tex.seamless = true
-	tex.noise = noise
+	# Colours, textures and parameters all come from the material set; the shader needs no inputs of its own.
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://addons/dk_voxel/voxel_terrain.gdshader")
-	mat.set_shader_parameter("noise_tex", tex) # colour and params come from the material set
 	return mat
 
 
