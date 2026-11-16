@@ -60,7 +60,7 @@ void VoxelWorld::ensure_volume() {
 		if (!st->save_directory.is_empty()) { // bounded: a file from an earlier run replaces the generated chunk
 			std::vector<uint8_t> raw;
 			for (dkv::WorldState::Chunk &c : st->chunks)
-				if (read_chunk_file(c.key, st->save_directory, st->generator_class, raw)) st->vol->deserialize_chunk(c.key.x, c.key.y, c.key.z, raw.data(), raw.size());
+				if (read_chunk_file(*st, c.key, st->save_directory, st->generator_class, raw)) st->vol->deserialize_chunk(c.key.x, c.key.y, c.key.z, raw.data(), raw.size());
 		}
 		for (dkv::WorldState::Chunk &c : st->chunks) c.version++;
 	}
@@ -190,7 +190,7 @@ void VoxelWorld::worker() {
 				PackedByteArray raw = r.job.stored.decompress((int)r.job.stored_size, FileAccess::COMPRESSION_ZSTD);
 				restored = raw.size() == (int64_t)r.job.stored_size && st->vol->deserialize_chunk(key.x, key.y, key.z, (const uint8_t *)raw.ptr(), (size_t)raw.size());
 			}
-			if (!restored && !r.job.save_dir.is_empty() && read_chunk_file(key, r.job.save_dir, r.job.gen_class, raw))
+			if (!restored && !r.job.save_dir.is_empty() && read_chunk_file(*st, key, r.job.save_dir, r.job.gen_class, raw))
 				restored = st->vol->deserialize_chunk(key.x, key.y, key.z, raw.data(), raw.size());
 			if (!restored) st->vol->fill_chunk(key.x, key.y, key.z, st->active_generator.get());
 			r.has = true;
@@ -201,106 +201,6 @@ void VoxelWorld::worker() {
 		std::lock_guard lk(st->qm);
 		st->results.push_back(std::move(r));
 	}
-}
-
-void VoxelWorld::free_chunk(dkv::WorldState::Chunk &c, bool body_only /* = false */) {
-	RenderingServer *rs = RenderingServer::get_singleton();
-	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
-	if (c.body.is_valid()) {
-		ps->free_rid(c.body);
-		ps->free_rid(c.shape);
-		c.body = c.shape = RID();
-		st->stat_bodies--;
-	}
-	c.collision = false;
-	if (body_only) return;
-	if (c.instance.is_valid()) rs->free_rid(c.instance);
-	if (c.mesh.is_valid()) {
-		rs->free_rid(c.mesh);
-		st->stat_meshes--;
-	}
-	c.instance = c.mesh = RID();
-	st->stat_tris -= c.tris;
-	c.tris = 0;
-	c.lod = -1;
-}
-
-// Keep an edited chunk that is about to be unloaded: on disk when save_directory is set (the file is then
-// authoritative), otherwise compressed in memory until something generates it again.
-void VoxelWorld::store_chunk(const dkv::ChunkKey &key, bool try_disk /* = true */) {
-	if (!st->vol->is_modified(key.x, key.y, key.z)) return;
-	std::vector<uint8_t> raw = st->vol->serialize_chunk(key.x, key.y, key.z);
-	if (raw.empty()) return;
-	// ponytail: unload writes on the main thread; move to a writer thread if hitches show
-	if (try_disk && !st->save_directory.is_empty() && write_chunk_file(key, raw.data(), raw.size())) { // on disk: the file is authoritative
-		st->vol->clear_modified(key.x, key.y, key.z);
-		st->store.erase(key); // a stale store entry would shadow the file we just wrote
-		return;
-	}
-	// no save_directory (or the write failed): compressed in memory until something generates it again
-	PackedByteArray data;
-	data.resize((int64_t)raw.size());
-	memcpy(data.ptrw(), raw.data(), raw.size());
-	st->store[key] = {(uint32_t)raw.size(), data.compress(FileAccess::COMPRESSION_ZSTD)};
-}
-
-String VoxelWorld::chunk_file_path(const dkv::ChunkKey &key, const String &dir) const {
-	return dir.path_join(String::num_int64(key.x) + "_" + String::num_int64(key.y) + "_" + String::num_int64(key.z) + ".dkvc");
-}
-
-bool VoxelWorld::write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size) {
-	const String path = chunk_file_path(key, st->save_directory);
-	String abs = st->save_directory;
-	if (abs.begins_with("user://") || abs.begins_with("res://")) abs = ProjectSettings::get_singleton()->globalize_path(abs);
-	if (!DirAccess::dir_exists_absolute(abs)) {
-		Error e = DirAccess::make_dir_recursive_absolute(abs);
-		if (e != OK) {
-			UtilityFunctions::push_error("VoxelWorld: cannot create save directory " + abs);
-			return false;
-		}
-	}
-	const String tmp = path + String(".tmp");
-	{
-		Ref<FileAccess> f = FileAccess::open_compressed(tmp, FileAccess::WRITE, FileAccess::COMPRESSION_ZSTD);
-		if (f.is_null()) {
-			UtilityFunctions::push_error("VoxelWorld: cannot write " + tmp);
-			return false;
-		}
-		f->store_32(DKVC_MAGIC);
-		f->store_16(DKVC_VERSION);
-		f->store_float(st->vol->cell);
-		f->store_pascal_string(st->generator_class);
-		f->store_32((uint32_t)size);
-		f->store_buffer(data, (uint64_t)size);
-	} // closed here: a reader never sees a half-written file
-	Error e = DirAccess::rename_absolute(tmp, path);
-	if (e != OK) {
-		UtilityFunctions::push_error("VoxelWorld: cannot rename " + tmp + " to " + path);
-		return false;
-	}
-	return true;
-}
-
-// Reads a chunk's save file into `out`. False when there is no file, or when the header names another
-// format, cell size or generator (reported once with the path; the caller falls back to the generator).
-// `dir` and `gen_class` come from the caller: workers pass the snapshot taken when their job was queued.
-bool VoxelWorld::read_chunk_file(const dkv::ChunkKey &key, const String &dir, const String &gen_class, std::vector<uint8_t> &out) {
-	const String path = chunk_file_path(key, dir);
-	if (!FileAccess::file_exists(path)) return false;
-	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
-	if (f.is_null()) return false;
-	if (f->get_32() != DKVC_MAGIC || f->get_16() != DKVC_VERSION || f->get_float() != st->vol->cell || f->get_pascal_string() != gen_class) {
-		UtilityFunctions::push_error("VoxelWorld: save file header mismatch (format/cell size/generator): " + path);
-		return false;
-	}
-	const uint32_t n = f->get_32();
-	PackedByteArray raw = f->get_buffer((int64_t)n);
-	if (raw.size() != (int64_t)n) {
-		UtilityFunctions::push_error("VoxelWorld: save file body is short (truncated): " + path);
-		return false; // generate instead
-	}
-	out.assign((const uint8_t *)raw.ptr(), (const uint8_t *)raw.ptr() + raw.size());
-	return true;
 }
 
 // Endless streaming: unload what no viewer wants, then queue a generate job for every wanted chunk that
@@ -324,9 +224,9 @@ void VoxelWorld::stream_endless() {
 			}
 		}
 		if (wanted) continue;
-		store_chunk(c.key);
+		store_chunk(*st, c.key);
 		st->vol->remove_chunk(c.key.x, c.key.y, c.key.z);
-		free_chunk(c);
+		free_chunk(*st, c);
 		st->chunk_lookup.erase(c.key);
 		if (i < (int)st->chunks.size() - 1) { // swap-remove; queued jobs carry a stale index and re-find by key
 			st->chunks[i] = std::move(st->chunks.back());
@@ -425,7 +325,7 @@ void VoxelWorld::scan() {
 			int lo = lod_at(d - hyst), hi = lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
 			want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
 		}
-		if (!want_coll && c.body.is_valid()) free_chunk(c, true);
+		if (!want_coll && c.body.is_valid()) free_chunk(*st, c, true);
 		bool stale = c.applied_version != c.version;
 		if (!stale && c.lod == want && (c.collision || !want_coll)) continue;
 		if (c.queued && c.queued_version == c.version) continue;
@@ -473,78 +373,14 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	st->stat_jobs++;
 	c.applied_version = r.job.version;
 	if (!r.has) {
-		free_chunk(c);
+		free_chunk(*st, c);
 		c.lod = r.job.lod;
 		c.collision = r.job.collision;
 		return;
 	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	const int nv = (int)r.mesh.pos.size() / 3, ni = (int)r.mesh.idx.size();
-	PackedVector3Array verts, normals;
-	PackedColorArray colors;
-	PackedInt32Array indices;
-	verts.resize(nv);
-	normals.resize(nv);
-	colors.resize(nv);
-	indices.resize(ni);
-	memcpy(verts.ptrw(), r.mesh.pos.data(), nv * sizeof(Vector3));
-	memcpy(normals.ptrw(), r.mesh.nrm.data(), nv * sizeof(Vector3));
-	memcpy(indices.ptrw(), r.mesh.idx.data(), ni * sizeof(int32_t));
-	Color *cw = colors.ptrw();
-	for (int i = 0; i < nv; i++) cw[i] = Color(r.mesh.col[i * 4] / 255.0f, r.mesh.col[i * 4 + 1] / 255.0f, r.mesh.col[i * 4 + 2] / 255.0f, r.mesh.col[i * 4 + 3] / 255.0f);
-	Array arrays;
-	arrays.resize(RenderingServer::ARRAY_MAX);
-	arrays[RenderingServer::ARRAY_VERTEX] = verts;
-	arrays[RenderingServer::ARRAY_NORMAL] = normals;
-	arrays[RenderingServer::ARRAY_COLOR] = colors;
-	arrays[RenderingServer::ARRAY_INDEX] = indices;
-	if (c.mesh.is_valid()) {
-		rs->mesh_clear(c.mesh);
-	} else {
-		c.mesh = rs->mesh_create();
-		st->stat_meshes++;
-	}
-	rs->mesh_add_surface_from_arrays(c.mesh, RenderingServer::PRIMITIVE_TRIANGLES, arrays);
-	if (st->material.is_valid()) rs->mesh_surface_set_material(c.mesh, 0, st->material->get_rid());
-	if (!c.instance.is_valid()) {
-		c.instance = rs->instance_create2(c.mesh, get_world_3d()->get_scenario());
-		rs->instance_set_transform(c.instance, st->chunk_transform(gx(), c));
-	}
-	st->stat_tris += ni / 3 - c.tris;
-	c.tris = ni / 3;
 	c.lod = r.job.lod;
-
-	// Collision is the LOD0 mesh itself. ponytail: only near the viewer, so bodies far from the camera
-	// have nothing to land on; add per-body collision anchors if that matters.
-	if (!r.job.collision || r.job.lod != 0) {
-		free_chunk(c, true);
-		return;
-	}
-	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
-	PackedVector3Array faces;
-	faces.resize(ni);
-	Vector3 *fw = faces.ptrw();
-	const Vector3 *vr = verts.ptr();
-	for (int i = 0; i < ni; i++) fw[i] = vr[r.mesh.idx[i]];
-	Dictionary data;
-	data["faces"] = faces;
-	data["backface_collision"] = false;
-	if (!c.body.is_valid()) {
-		c.shape = ps->concave_polygon_shape_create();
-		ps->shape_set_data(c.shape, data);
-		c.body = ps->body_create();
-		ps->body_set_mode(c.body, PhysicsServer3D::BODY_MODE_STATIC);
-		ps->body_add_shape(c.body, c.shape);
-		ps->body_set_collision_layer(c.body, st->collision_layer);
-		ps->body_set_collision_mask(c.body, 0);
-		ps->body_attach_object_instance_id(c.body, get_instance_id());
-		ps->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, st->chunk_transform(gx(), c));
-		ps->body_set_space(c.body, get_world_3d()->get_space());
-		st->stat_bodies++;
-	} else {
-		ps->shape_set_data(c.shape, data);
-	}
-	c.collision = true;
+	const bool want_body = r.job.collision && r.job.lod == 0;
+	upload_chunk(*st, *this, c, r.mesh, st->chunk_transform(gx(), c), want_body);
 }
 
 Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp) {
@@ -648,7 +484,7 @@ void VoxelWorld::_notification(int what) {
 		}
 	} else if (what == NOTIFICATION_EXIT_WORLD) { // RIDs belong to the world we are leaving; remesh on re-entry
 		for (dkv::WorldState::Chunk &c : st->chunks) {
-			free_chunk(c);
+			free_chunk(*st, c);
 			c.applied_version = 0;
 		}
 		st->need_scan = true;
@@ -660,50 +496,24 @@ VoxelWorld::VoxelWorld() {
 	set_notify_transform(true);
 }
 VoxelWorld::~VoxelWorld() {
-	save(); // flush what this world edited; never deletes files
+	dkv::save_world(*st); // flush what this world edited; never deletes files
 	stop_workers();
-	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(c);
+	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
 }
 
-// Writes every modified loaded chunk and every unloaded stored edit, then clears the modified flags so
-// the same chunk is not written twice. Empty save_directory: nothing goes to disk.
-Error VoxelWorld::save() {
-	if (st->save_directory.is_empty() || !st->vol) return OK;
-	Error err = OK;
-	std::vector<dkv::ChunkKey> written;
-	for (const dkv::ChunkKey &key : st->vol->loaded_chunks())
-		if (st->vol->is_modified(key.x, key.y, key.z)) { // loaded chunks are newer than any store entry
-			st->store.erase(key);
-			std::vector<uint8_t> raw = st->vol->serialize_chunk(key.x, key.y, key.z);
-			if (raw.empty()) continue;
-			if (write_chunk_file(key, raw.data(), raw.size())) st->vol->clear_modified(key.x, key.y, key.z);
-			else err = ERR_FILE_CANT_WRITE;
-		}
-	for (const auto &kv : st->store) { // unloaded edits: decompressed back to the core's format
-		PackedByteArray raw = kv.second.data.decompress((int64_t)kv.second.raw_size, FileAccess::COMPRESSION_ZSTD);
-		if (raw.size() != (int64_t)kv.second.raw_size) {
-			UtilityFunctions::push_error("VoxelWorld: stored chunk did not decompress");
-			err = ERR_FILE_CORRUPT;
-			continue;
-		}
-		if (!write_chunk_file(kv.first, (const uint8_t *)raw.ptr(), (size_t)raw.size())) err = ERR_FILE_CANT_WRITE;
-		else written.push_back(kv.first); // erased after the loop: the map must not change while iterating
-	}
-	for (const dkv::ChunkKey &key : written) st->store.erase(key);
-	return err;
-}
+Error VoxelWorld::save() { return dkv::save_world(*st); }
 
 void VoxelWorld::reset() {
 	st->generation++; // results still in flight belong to the world we are dropping
 	stop_workers();
-	if (save() == OK) {
+	if (dkv::save_world(*st) == OK) {
 		st->store.clear(); // everything reached disk (or save_directory is empty, so there is nothing to keep)
 	} else { // do not discard edits a later save() could still write
 		UtilityFunctions::push_error("VoxelWorld: reset could not write every edited chunk; keeping them for a later save()");
 		for (const dkv::ChunkKey &key : st->vol->loaded_chunks())
-			if (st->vol->is_modified(key.x, key.y, key.z)) store_chunk(key, false); // the flush just failed: keep in memory
+			if (st->vol->is_modified(key.x, key.y, key.z)) store_chunk(*st, key, false); // the flush just failed: keep in memory
 	}
-	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(c);
+	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
 	st->chunks.clear();
 	st->chunk_lookup.clear();
 	st->vol.reset();

@@ -37,21 +37,16 @@ class VoxelWorld : public Node3D {
 	void update_viewers();
 	dkv::WorldState::Chunk *find_chunk(int cx, int cy, int cz);
 	void worker();
-	void free_chunk(dkv::WorldState::Chunk &c, bool body_only = false);
 
 	// Endless streaming: unload what no viewer wants (keeping edits in `store`), then queue generate
 	// jobs for the wanted set. Bounded worlds keep every chunk and never call this.
 	void stream_endless();
 	// Keeps an edited chunk that is about to be unloaded: on disk when save_directory is set, else (or when
 	// the write fails) compressed in `store`. `try_disk` is false when a write was just attempted and failed.
-	void store_chunk(const dkv::ChunkKey &key, bool try_disk = true);
 
 	// One zstd file per modified chunk: `<dir>/<x>_<y>_<z>.dkvc` (the directory is passed in: workers read a
 	// snapshot taken at queue time). read_chunk_file() is false when there is no file or its header does not
 	// match this world (it pushes an error in that case).
-	String chunk_file_path(const dkv::ChunkKey &key, const String &dir) const;
-	bool write_chunk_file(const dkv::ChunkKey &key, const uint8_t *data, size_t size); // main thread only
-	bool read_chunk_file(const dkv::ChunkKey &key, const String &dir, const String &gen_class, std::vector<uint8_t> &out);
 
 	// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
 	void scan();

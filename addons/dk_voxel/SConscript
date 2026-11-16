@@ -30,7 +30,9 @@ sources = [obj.File(name) for name in (
 	"core/voxel_volume.cpp",
 	"demo_generator.cpp",
 	"register_types.cpp",
+	"voxel_chunks.cpp",
 	"voxel_resources.cpp",
+	"voxel_save.cpp",
 	"voxel_world.cpp",
 )]
 Return("sources", "src")

@@ -3,6 +3,7 @@
 #pragma once
 #include "core/voxel_volume.h"
 
+#include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
@@ -13,6 +14,7 @@
 #include <godot_cpp/variant/vector3i.hpp>
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -115,5 +117,16 @@ struct WorldState {
 	int chunk_index(int x, int y, int z) const { return ((int)((size_t)(z - vol->bmin[2]) * ncy() + (y - vol->bmin[1])) * ncx() + (x - vol->bmin[0])); }
 	Transform3D chunk_transform(const Transform3D &gx, const Chunk &c) const { return gx * Transform3D(Basis(), c.offset); }
 };
+
+// voxel_chunks.cpp: chunk RID lifecycle.
+void free_chunk(WorldState &st, WorldState::Chunk &c, bool body_only = false);
+void upload_chunk(WorldState &st, VoxelWorld &world, WorldState::Chunk &c, const MeshData &m, const Transform3D &xf, bool collision);
+
+// voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.
+String chunk_file_path(const ChunkKey &key, const String &dir);
+bool write_chunk_file(WorldState &st, const ChunkKey &key, const uint8_t *data, size_t size);
+bool read_chunk_file(WorldState &st, const ChunkKey &key, const String &dir, const String &gen_class, std::vector<uint8_t> &out);
+void store_chunk(WorldState &st, const ChunkKey &key, bool try_disk = true);
+Error save_world(WorldState &st);
 
 } // namespace dkv
