@@ -1,6 +1,102 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=9 format=3]
 
-[ext_resource type="Script" path="res://demo/main.gd" id="1"]
+[ext_resource type="Script" path="res://demo/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://demo/world.gd" id="2_world"]
+[ext_resource type="Script" path="res://demo/player.gd" id="3_player"]
+[ext_resource type="Script" path="res://demo/hud.gd" id="4_hud"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.16, 0.36, 0.78, 1)
+sky_horizon_color = Color(0.72, 0.82, 0.92, 1)
+ground_bottom_color = Color(0.55, 0.66, 0.78, 1)
+ground_horizon_color = Color(0.72, 0.82, 0.92, 1)
+
+[sub_resource type="Sky" id="Sky_demo"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_demo"]
+background_mode = 2
+sky = SubResource("Sky_demo")
+ambient_light_source = 3
+ambient_light_energy = 0.7
+tonemap_mode = 4
+ssao_enabled = true
+ssao_radius = 1.6
+ssao_intensity = 2.2
+ssil_enabled = true
+glow_enabled = true
+glow_intensity = 0.6
+glow_bloom = 0.05
+fog_enabled = true
+fog_light_color = Color(0.7, 0.8, 0.92, 1)
+fog_density = 0.0028
+fog_aerial_perspective = 0.6
+fog_sky_affect = 0.0
+adjustment_enabled = true
+adjustment_saturation = 1.25
+adjustment_contrast = 1.08
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
+radius = 0.4
+height = 1.7
 
 [node name="Main" type="Node3D"]
-script = ExtResource("1")
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_demo")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.733038, -0.610865, 0)
+light_color = Color(1, 0.94, 0.82, 1)
+light_energy = 1.3
+shadow_enabled = true
+shadow_bias = 0.04
+shadow_normal_bias = 1.4
+directional_shadow_max_distance = 160.0
+
+[node name="World" type="VoxelWorld" parent="."]
+script = ExtResource("2_world")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+floor_max_angle = 0.872665
+floor_snap_length = 0.35
+script = ExtResource("3_player")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+shape = SubResource("CapsuleShape3D_player")
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+position = Vector3(0, 0.65, 0)
+current = true
+fov = 80.0
+far = 600.0
+
+[node name="Lamp" type="OmniLight3D" parent="Player/Camera3D"]
+light_color = Color(1, 0.85, 0.65, 1)
+light_energy = 0.7
+omni_range = 14.0
+
+[node name="Viewer" type="VoxelViewer" parent="Player"]
+position = Vector3(0, 0.9, 0)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")
+
+[node name="Status" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 8.0
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 5
+
+[node name="Crosshair" type="Label" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+text = "+"
+horizontal_alignment = 1
+vertical_alignment = 1
