@@ -1,16 +1,16 @@
 extends VoxelWorld
 ## The demo world node: material set, terrain profile, ruins, and the debris and bombs of an edit.
 
-const MATERIALS := [ # name, colour a, colour b, pattern scale, roughness, metallic, emission, hardness
-	["Default", Color(0.5, 0.5, 0.5), Color(0.6, 0.6, 0.6), 0.5, 0.9, 0.0, 0.0, 0],
-	["Grass", Color(0.13, 0.36, 0.09), Color(0.34, 0.52, 0.13), 0.22, 0.95, 0.0, 0.0, 0],
-	["Soil", Color(0.27, 0.15, 0.08), Color(0.44, 0.28, 0.15), 0.3, 0.95, 0.0, 0.0, 0],
-	["Rock", Color(0.27, 0.29, 0.36), Color(0.50, 0.50, 0.54), 0.16, 0.8, 0.0, 0.0, 1],
-	["Sand", Color(0.66, 0.50, 0.28), Color(0.80, 0.68, 0.44), 0.4, 1.0, 0.0, 0.0, 0],
-	["Gold", Color(0.95, 0.55, 0.06), Color(1.0, 0.80, 0.28), 0.35, 0.3, 1.0, 0.2, 1],
-	["Bedrock", Color(0.08, 0.06, 0.11), Color(0.18, 0.14, 0.23), 0.14, 0.6, 0.0, 0.0, 255],
-	["Brick", Color(0.46, 0.20, 0.14), Color(0.62, 0.36, 0.26), 0.3, 0.85, 0.0, 0.0, 1],
-	["Crystal", Color(0.08, 0.60, 0.80), Color(0.60, 0.28, 0.85), 0.2, 0.15, 0.3, 1.2, 2],
+const MATERIALS := [ # name, albedo, normal, tiles per metre, roughness, metallic, emission, hardness
+	["Default", "soil", "soil", 0.5, 0.9, 0.0, 0.0, 0],
+	["Grass", "grass", "grass", 0.22, 0.95, 0.0, 0.0, 0],
+	["Soil", "soil", "soil", 0.3, 0.95, 0.0, 0.0, 0],
+	["Rock", "rock", "rock", 0.16, 0.8, 0.0, 0.0, 1],
+	["Sand", "sand", "sand", 0.4, 1.0, 0.0, 0.0, 0],
+	["Gold", "gold", "gold", 0.35, 0.3, 1.0, 0.2, 1],
+	["Bedrock", "bedrock", "bedrock", 0.14, 0.6, 0.0, 0.0, 255],
+	["Brick", "brick", "brick", 0.3, 0.85, 0.0, 0.0, 1],
+	["Crystal", "crystal", "crystal", 0.2, 0.15, 0.3, 1.2, 2],
 ]
 const CELL := 0.5
 const GROUND_FROM := 400.0 # raycast down from here to find the ground: endless worlds have no height
@@ -84,23 +84,17 @@ func _make_material_set() -> VoxelMaterialSet:
 	for m in MATERIALS:
 		var d := VoxelMaterialDef.new()
 		d.name = m[0]
-		d.color_a = m[1]
-		d.color_b = m[2]
+		# Every surface is a real image file; tints are baked into the file by demo/textures/make_textures.py.
+		d.albedo = load("res://demo/textures/%s_albedo.png" % m[1])
+		d.normal = load("res://demo/textures/%s_normal.png" % m[2])
+		d.color_a = Color.WHITE # leave the albedo as authored: the tint ramp stays out of the way
+		d.color_b = Color.WHITE
 		d.pattern_scale = m[3]
 		d.roughness = m[4]
 		d.metallic = m[5]
 		d.emission = m[6]
 		d.hardness = m[7]
 		defs.append(d)
-	# Two real texture files on rock: this is the whole game-side job. The colours above tint the texture, so
-	# rock's are lightened to near-white here to let the image show.
-	var rock := defs[3]
-	rock.albedo = load("res://demo/textures/rock_albedo.png")
-	rock.normal = load("res://demo/textures/rock_normal.png")
-	rock.color_a = Color(0.87, 0.86, 0.88)
-	rock.color_b = Color(1.0, 0.98, 0.95)
-	rock.pattern_scale = 0.35 # tiles per metre: 8 m chunks x 0.35 is not a whole number, so a chunk-local
-	# UV space would show a seam every 8 m — this value keeps that regression visible
 	set.materials = defs
 	return set
 
@@ -143,7 +137,7 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 	if not debris_mats.has(id):
 		var d := _material(id)
 		var m := StandardMaterial3D.new()
-		m.albedo_color = d.color_a.lerp(d.color_b, 0.5)
+		m.albedo_texture = d.albedo
 		m.roughness = d.roughness
 		m.metallic = d.metallic
 		debris_mats[id] = m

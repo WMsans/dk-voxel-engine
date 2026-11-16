@@ -52,8 +52,8 @@ Properties:
   image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
   game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
   albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
-  `demo/textures/` plus `demo/main.gd` for the working example. `pattern_scale` is tiles per metre. A
-  material with no textures gets a built-in grain and a flat normal. The shader's `normal_strength`
+  `demo/textures/` plus `demo/world.gd` for the working example. `pattern_scale` is tiles per metre. A
+  material with no textures gets a flat grey albedo and a flat normal. The shader's `normal_strength`
   uniform scales the normal map if it reads too strong at a given tiling. Ids run to 32; a voxel carrying a
   higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
   set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey

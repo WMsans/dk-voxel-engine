@@ -18,23 +18,11 @@ namespace {
 // Every layer of a Texture2DArray shares one size and format.
 constexpr int TEXTURE_ARRAY_SIZE = 256;
 
-// A near-white grain, so a material with no textures keeps the demo's speckled look. The shader's tint ramp
-// turns its luminance into the two-colour pattern.
-Ref<Image> grain_image() {
-	Ref<Image> img = Image::create(64, 64, false, Image::FORMAT_RGBA8);
-	uint32_t h = 0x9e3779b9u;
-	for (int y = 0; y < 64; y++)
-		for (int x = 0; x < 64; x++) {
-			h = h * 1664525u + 1013904223u;
-			const float t = 0.55f + 0.45f * (float)((h >> 16) & 0xff) / 255.0f;
-			img->set_pixel(x, y, Color(t, t, t));
-		}
-	return img;
-}
-
-Ref<Image> flat_normal_image() {
+// The layer a material with no texture gets: a flat colour, sized like the array so packing does not resize
+// it. A Texture2DArray needs a value in every slot; nothing here draws a pattern.
+Ref<Image> flat_image(const Color &color) {
 	Ref<Image> img = Image::create(TEXTURE_ARRAY_SIZE, TEXTURE_ARRAY_SIZE, false, Image::FORMAT_RGBA8);
-	img->fill(Color(0.5f, 0.5f, 1.0f));
+	img->fill(color);
 	return img;
 }
 
@@ -110,11 +98,11 @@ void dkv::apply_material_set(WorldState &st) {
 	if (fingerprint == st.material_fingerprint && sm->get_shader_parameter("albedo_tex").get_type() == Variant::OBJECT) return;
 	st.material_fingerprint = fingerprint;
 
-	const Ref<Image> grain = grain_image(), flat = flat_normal_image();
+	const Ref<Image> grey = flat_image(Color(0.5f, 0.5f, 0.5f)), flat = flat_image(Color(0.5f, 0.5f, 1.0f));
 	TypedArray<Ref<Image>> albedo_layers, normal_layers;
 	for (int i = 0; i < MATERIAL_SLOTS; i++) {
 		Ref<VoxelMaterialDef> m = material_def(st.material_set, i);
-		albedo_layers.push_back(layer_image(m->get_albedo(), grain));
+		albedo_layers.push_back(layer_image(m->get_albedo(), grey));
 		normal_layers.push_back(layer_image(m->get_normal(), flat));
 	}
 	Ref<Texture2DArray> albedo;
