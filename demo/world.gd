@@ -30,8 +30,8 @@ var profile := "level"
 var gold := 0.0
 var debris: Array[RigidBody3D] = []
 var debris_mats := {}
-var box_mesh := BoxMesh.new()
-var box_shape := BoxShape3D.new()
+var rocks: Array[ArrayMesh] = []
+var rock_shapes: Array[Shape3D] = []
 
 
 func _ready() -> void:
@@ -153,22 +153,30 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 			d = _material(d.inner_material)
 		var m := StandardMaterial3D.new()
 		m.albedo_texture = d.albedo
+		m.normal_enabled = true
+		m.normal_texture = d.normal
+		m.uv1_triplanar = true # object-space projection, like Bananza's voxel texcoord: texture tumbles with the chip
+		m.uv1_scale = Vector3.ONE * d.pattern_scale
 		m.roughness = d.roughness
 		m.metallic = d.metallic
 		debris_mats[id] = m
+	if rocks.is_empty():
+		for i in 10:
+			rocks.append(_make_rock())
+			rock_shapes.append(rocks[i].create_convex_shape())
+	var r := randi() % rocks.size()
 	var b := RigidBody3D.new()
 	var mi := MeshInstance3D.new()
-	mi.mesh = box_mesh
+	mi.mesh = rocks[r]
 	mi.material_override = debris_mats[id]
 	var cs := CollisionShape3D.new()
-	cs.shape = box_shape
+	cs.shape = rock_shapes[r]
 	b.add_child(mi)
 	b.add_child(cs)
-	b.scale = Vector3.ONE # RigidBody ignores scale; size the children instead
-	var size := Vector3(randf_range(0.12, 0.4), randf_range(0.12, 0.35), randf_range(0.12, 0.4))
-	mi.scale = size
-	cs.scale = size
-	b.mass = size.x * size.y * size.z * 40.0
+	var size := randf_range(0.12, 0.4) # rocks are unit-ish; uniform scale keeps the convex shape valid
+	mi.scale = Vector3.ONE * size
+	cs.scale = Vector3.ONE * size
+	b.mass = size * size * size * 25.0
 	b.collision_layer = 2
 	b.collision_mask = 1 | 2
 	b.position = at
@@ -180,6 +188,36 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 		if is_instance_valid(b):
 			debris.erase(b)
 			b.queue_free())
+
+
+## A low-poly faceted chip like Bananza's Eft_Fragment primitives: a coarse sphere, squashed, its vertices
+## jittered and sliced flat by a couple of fracture planes, flat shaded.
+func _make_rock() -> ArrayMesh:
+	var sphere := SphereMesh.new()
+	sphere.radial_segments = randi_range(5, 7)
+	sphere.rings = randi_range(3, 4)
+	var arrays := sphere.get_mesh_arrays()
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var aspect := Vector3(randf_range(0.8, 1.3), randf_range(0.55, 1.0), randf_range(0.8, 1.3))
+	var cuts: Array[Plane] = []
+	for i in randi_range(1, 3):
+		cuts.append(Plane(Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized(), randf_range(0.15, 0.35)))
+	var moved := {} # seam/pole duplicates share a position: move them together so the chip stays closed
+	for i in verts.size():
+		var key := verts[i].snapped(Vector3.ONE * 0.001)
+		if not moved.has(key):
+			var v := (verts[i] + Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * 0.25) * aspect
+			for c in cuts:
+				v -= c.normal * maxf(c.distance_to(v), 0.0)
+			moved[key] = v
+		verts[i] = moved[key]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_smooth_group(-1) # flat facets
+	for i in arrays[Mesh.ARRAY_INDEX]:
+		st.add_vertex(verts[i])
+	st.generate_normals()
+	return st.commit()
 
 
 func throw_bomb(from: Vector3, forward: Vector3) -> void:
