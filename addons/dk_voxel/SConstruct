@@ -12,10 +12,13 @@ SConscript(os.path.join("thirdparty", "godot-cpp", "SConstruct"), {"env": env, "
 
 # The mesher is the hot path: optimise it even in the editor (template_debug) library.
 env.Append(CXXFLAGS=["-O3"])
-env.VariantDir("build/obj", "src", duplicate=0)
+# The addon's sources, from the SConscript games share. Only the addon's own library adds entry.cpp, the
+# GDExtension entry symbol a game replaces with its own; it goes through the same object variant dir so
+# its object does not land in src/.
+dk_sources, dk_include = SConscript("SConscript", {"env": env})
+env.Append(CPPPATH=[dk_include])
 suffix = env["suffix"].replace(".dev", "").replace(".universal", "")
-Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"],
-                          source=["build/obj/volume.cpp", "build/obj/demo_generator.cpp", "build/obj/mesher.cpp", "build/obj/voxel_resources.cpp", "build/obj/register_types.cpp", "build/obj/voxel_world.cpp"]))
+Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"], source=dk_sources + [File("build/obj/entry.cpp")]))
 
 # Core self-test: host toolchain only (volume/mesher have no Godot dependency).
 t = Environment()

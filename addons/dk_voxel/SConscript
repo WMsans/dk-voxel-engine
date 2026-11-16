@@ -1,0 +1,28 @@
+# Shared source list for the dk_voxel addon, for games that compile it into their own GDExtension.
+#
+# From a game's SConstruct, after godot-cpp has set up `env`:
+#
+#     dk_sources, dk_include = SConscript("addons/dk_voxel/SConscript", {"env": env})
+#     env.Append(CPPPATH=[dk_include])
+#     env.SharedLibrary("bin/mygame", source=dk_sources + env.Glob("src/*.cpp"))
+#
+# `dk_sources` are the addon's .cpp files as SCons nodes in the addon's `build/obj` VariantDir: they
+# compile with the game's `env` and flags, but their objects land next to the addon, not in the game's
+# build tree. `dk_include` is the addon's `src/`, where the headers live (and where the game's
+# `#include "register_types.h"` resolves). The addon's own GDExtension entry symbol is `src/entry.cpp`,
+# which is deliberately left out: the game's library provides its own. The addon's own SConstruct adds it.
+Import("env")
+
+here = Dir(".")
+src = here.Dir("src")
+obj = here.Dir("build/obj")
+env.VariantDir(obj, src, duplicate=0)
+sources = [obj.File(name) for name in (
+	"demo_generator.cpp",
+	"mesher.cpp",
+	"register_types.cpp",
+	"voxel_resources.cpp",
+	"voxel_world.cpp",
+	"volume.cpp",
+)]
+Return("sources", "src")
