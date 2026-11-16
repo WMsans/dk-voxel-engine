@@ -1,8 +1,9 @@
 // VoxelWorld: Godot node around dkv::Volume. Worker threads mesh 16^3-cell chunks nearest-first; the main
 // thread uploads results to the RenderingServer and (near the viewer) to static trimesh bodies.
 #pragma once
-#include "voxel_world_state.h"
+#include "voxel_materials.h"
 #include "voxel_resources.h"
+#include "voxel_world_state.h"
 
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -23,10 +24,6 @@ class VoxelWorld : public Node3D {
 	// Builds the Volume from the properties on first use: first edit, query or _ready. Bounded worlds are
 	// generated synchronously; endless worlds start empty (streaming arrives in Task 5).
 	void ensure_volume();
-	// Def for a material id: entry `id` if the set has one, else entry 0 (a non-empty set), else a default grey zero-hardness def.
-	Ref<VoxelMaterialDef> material_def(int id) const;
-	void apply_hardness();
-	void push_material_uniforms();
 
 	dkv::WorldState::Chunk *find_chunk(int cx, int cy, int cz);
 
@@ -39,6 +36,8 @@ class VoxelWorld : public Node3D {
 
 
 	void apply(dkv::WorldState::Result &r);
+	// Re-packs the textures and re-applies hardness when the material set or any def in it changes.
+	void _materials_changed();
 
 	Dictionary do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp);
 

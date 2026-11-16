@@ -22,39 +22,6 @@ void DemoTerrainGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "height"), "set_height", "get_height");
 }
 
-void VoxelMaterialDef::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_name", "v"), &VoxelMaterialDef::set_name);
-	ClassDB::bind_method(D_METHOD("get_name"), &VoxelMaterialDef::get_name);
-	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name"), "set_name", "get_name");
-	ClassDB::bind_method(D_METHOD("set_color_a", "v"), &VoxelMaterialDef::set_color_a);
-	ClassDB::bind_method(D_METHOD("get_color_a"), &VoxelMaterialDef::get_color_a);
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "color_a"), "set_color_a", "get_color_a");
-	ClassDB::bind_method(D_METHOD("set_color_b", "v"), &VoxelMaterialDef::set_color_b);
-	ClassDB::bind_method(D_METHOD("get_color_b"), &VoxelMaterialDef::get_color_b);
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "color_b"), "set_color_b", "get_color_b");
-	ClassDB::bind_method(D_METHOD("set_pattern_scale", "v"), &VoxelMaterialDef::set_pattern_scale);
-	ClassDB::bind_method(D_METHOD("get_pattern_scale"), &VoxelMaterialDef::get_pattern_scale);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pattern_scale"), "set_pattern_scale", "get_pattern_scale");
-	ClassDB::bind_method(D_METHOD("set_roughness", "v"), &VoxelMaterialDef::set_roughness);
-	ClassDB::bind_method(D_METHOD("get_roughness"), &VoxelMaterialDef::get_roughness);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness"), "set_roughness", "get_roughness");
-	ClassDB::bind_method(D_METHOD("set_metallic", "v"), &VoxelMaterialDef::set_metallic);
-	ClassDB::bind_method(D_METHOD("get_metallic"), &VoxelMaterialDef::get_metallic);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "metallic"), "set_metallic", "get_metallic");
-	ClassDB::bind_method(D_METHOD("set_emission", "v"), &VoxelMaterialDef::set_emission);
-	ClassDB::bind_method(D_METHOD("get_emission"), &VoxelMaterialDef::get_emission);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission"), "set_emission", "get_emission");
-	ClassDB::bind_method(D_METHOD("set_hardness", "v"), &VoxelMaterialDef::set_hardness);
-	ClassDB::bind_method(D_METHOD("get_hardness"), &VoxelMaterialDef::get_hardness);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "hardness"), "set_hardness", "get_hardness");
-}
-
-void VoxelMaterialSet::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_materials", "v"), &VoxelMaterialSet::set_materials);
-	ClassDB::bind_method(D_METHOD("get_materials"), &VoxelMaterialSet::get_materials);
-	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "materials", PROPERTY_HINT_TYPE_STRING, "24/17:VoxelMaterialDef"), "set_materials", "get_materials");
-}
-
 void VoxelViewer::_ready() {
 	add_to_group(VIEWER_GROUP);
 }

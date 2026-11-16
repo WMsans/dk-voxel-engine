@@ -1,6 +1,7 @@
 // Registers every addon class. The GDExtension entry symbol the addon library uses lives in entry.cpp;
 // games that compile these sources into their own library keep this file and provide their own.
 #include "register_types.h"
+#include "voxel_materials.h"
 #include "voxel_resources.h"
 #include "voxel_world.h"
 

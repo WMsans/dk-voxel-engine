@@ -47,55 +47,6 @@ protected:
 	static void _bind_methods();
 };
 
-// One entry of a VoxelMaterialSet. hardness: erase power needed, 255 = unbreakable.
-class VoxelMaterialDef : public Resource {
-	GDCLASS(VoxelMaterialDef, Resource)
-
-	String name;
-	Color color_a = Color(0.5f, 0.5f, 0.5f);
-	Color color_b = Color(0.6f, 0.6f, 0.6f);
-	float pattern_scale = 0.3f;
-	float roughness = 0.9f;
-	float metallic = 0.0f;
-	float emission = 0.0f;
-	int hardness = 0;
-
-public:
-	void set_name(const String &p_name) { name = p_name; }
-	String get_name() const { return name; }
-	void set_color_a(const Color &p_color) { color_a = p_color; }
-	Color get_color_a() const { return color_a; }
-	void set_color_b(const Color &p_color) { color_b = p_color; }
-	Color get_color_b() const { return color_b; }
-	void set_pattern_scale(float p_scale) { pattern_scale = p_scale; }
-	float get_pattern_scale() const { return pattern_scale; }
-	void set_roughness(float p_roughness) { roughness = p_roughness; }
-	float get_roughness() const { return roughness; }
-	void set_metallic(float p_metallic) { metallic = p_metallic; }
-	float get_metallic() const { return metallic; }
-	void set_emission(float p_emission) { emission = p_emission; }
-	float get_emission() const { return emission; }
-	void set_hardness(int p_hardness) { hardness = CLAMP(p_hardness, 0, 255); }
-	int get_hardness() const { return hardness; }
-
-protected:
-	static void _bind_methods();
-};
-
-// Index = material id. Missing ids read as entry 0.
-class VoxelMaterialSet : public Resource {
-	GDCLASS(VoxelMaterialSet, Resource)
-
-	TypedArray<VoxelMaterialDef> materials;
-
-public:
-	void set_materials(const TypedArray<VoxelMaterialDef> &p_materials) { materials = p_materials; }
-	TypedArray<VoxelMaterialDef> get_materials() const { return materials; }
-
-protected:
-	static void _bind_methods();
-};
-
 // Drives chunk streaming, LOD and collision for the VoxelWorld nodes sharing its World3D.
 class VoxelViewer : public Node3D {
 	GDCLASS(VoxelViewer, Node3D)

@@ -31,6 +31,7 @@ sources = [obj.File(name) for name in (
 	"demo_generator.cpp",
 	"register_types.cpp",
 	"voxel_chunks.cpp",
+	"voxel_materials.cpp",
 	"voxel_resources.cpp",
 	"voxel_save.cpp",
 	"voxel_stream.cpp",

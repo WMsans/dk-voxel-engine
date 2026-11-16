@@ -4,6 +4,9 @@
 // or cave ceilings and no UVs are needed.
 shader_type spatial;
 
+// Must match dk_voxel::MATERIAL_SLOTS; tests/run_tests.gd fails if the two disagree.
+const int MATERIAL_SLOTS = 32;
+
 uniform sampler3D noise_tex : repeat_enable, filter_linear_mipmap;
 uniform vec3 color_a[32] : source_color;
 uniform vec3 color_b[32] : source_color;
@@ -30,8 +33,8 @@ vec4 surface(int id, vec3 p) {
 }
 
 void fragment() {
-	int ia = int(COLOR.r * 255.0 + 0.5) & 31;
-	int ib = int(COLOR.g * 255.0 + 0.5) & 31;
+	int ia = int(COLOR.r * 255.0 + 0.5) & (MATERIAL_SLOTS - 1);
+	int ib = int(COLOR.g * 255.0 + 0.5) & (MATERIAL_SLOTS - 1);
 	vec4 a = surface(ia, vpos);
 	vec4 b = ia == ib ? a : surface(ib, vpos);
 	// Height blend: the taller material wins near the transition, giving a ragged, natural border.

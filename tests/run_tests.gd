@@ -157,6 +157,103 @@ func _initialize() -> void:
 				"material set reaches the shader (color_a %s, params %s)" % [color_a[0], p0])
 	mw.free()
 
+	# Textures reach the shader as one array layer per material id, from real Texture2D resources.
+	var tex_world := VoxelWorld.new()
+	var shader_mat := ShaderMaterial.new()
+	shader_mat.shader = shader
+	var albedo_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	albedo_img.fill(Color(1.0, 0.0, 0.0))
+	var albedo_tex := ImageTexture.create_from_image(albedo_img)
+	var def0 := VoxelMaterialDef.new()
+	def0.albedo = albedo_tex
+	var tex_defs: Array[VoxelMaterialDef] = [def0]
+	var tex_set := VoxelMaterialSet.new()
+	tex_set.materials = tex_defs
+	tex_world.material = shader_mat
+	tex_world.material_set = tex_set
+	var packed: Texture2DArray = shader_mat.get_shader_parameter("albedo_tex")
+	check(packed != null and packed.get_layers() == 32, "albedo packs 32 layers (%s)" % [packed])
+	# get_layer_data() needs a renderer that keeps image data; --headless uses the dummy driver, which does
+	# not. When it is readable the layer's pixels are checked; when it is not, the array's size and identity
+	# still prove the packing ran. Task 7's --shot run is the visual proof of the pixels.
+	var can_read := packed != null and packed.get_layer_data(0) != null
+	print("  ..  array layers %s" % ["readable" if can_read else "unreadable (dummy renderer)"])
+	if can_read:
+		var layer0 := packed.get_layer_data(0)
+		check(layer0.get_pixel(0, 0).r > 0.9 and layer0.get_pixel(0, 0).g < 0.1, "layer 0 is the def's own texture")
+	else:
+		check(packed.get_width() == 256 and packed.get_height() == 256, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
+
+	# Swapping the texture in place repacks, and so does replacing the set's materials array. A repack gives a
+	# new array object, which is observable even when the layer data is not.
+	var packed_before := packed
+	var green_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	green_img.fill(Color(0.0, 1.0, 0.0))
+	def0.albedo = ImageTexture.create_from_image(green_img)
+	packed = shader_mat.get_shader_parameter("albedo_tex")
+	if can_read:
+		check(packed.get_layer_data(0).get_pixel(0, 0).g > 0.9, "editing a def's texture reaches the shader")
+	else:
+		check(packed != null and packed != packed_before, "editing a def's texture repacks the arrays")
+	packed_before = packed
+	var def0b := VoxelMaterialDef.new()
+	def0b.albedo = albedo_tex
+	var swapped: Array[VoxelMaterialDef] = [def0b]
+	tex_set.materials = swapped
+	packed = shader_mat.get_shader_parameter("albedo_tex")
+	if can_read:
+		check(packed.get_layer_data(0).get_pixel(0, 0).r > 0.9, "replacing materials repacks")
+	else:
+		check(packed != null and packed != packed_before, "replacing materials repacks")
+
+	# Odd sizes must not break packing, and a def with no textures must still produce a layer.
+	var tiny_img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	tiny_img.fill(Color(0.2, 0.4, 0.6))
+	var big_img := Image.create(512, 512, false, Image.FORMAT_RGBA8)
+	big_img.fill(Color(0.6, 0.2, 0.2))
+	var bare := VoxelMaterialDef.new()
+	var odd: Array[VoxelMaterialDef] = []
+	for i in 33: # one past the cap: packed to 32, no error, no crash
+		var d := VoxelMaterialDef.new()
+		d.albedo = ImageTexture.create_from_image(tiny_img if i % 2 == 0 else big_img)
+		odd.append(d)
+	odd[0] = bare
+	var odd_set := VoxelMaterialSet.new()
+	odd_set.materials = odd
+	var odd_world := VoxelWorld.new()
+	odd_world.material = shader_mat
+	odd_world.material_set = odd_set
+	packed = shader_mat.get_shader_parameter("albedo_tex")
+	check(packed != null and packed.get_layers() == 32, "mixed sizes and an over-long set still pack 32 layers")
+
+	# An id past the cap is legal voxel data: it must mesh and render without error and must not wrap.
+	var over := VoxelWorld.new()
+	over.bounds_size = Vector3i(2, 2, 2)
+	over.cell_size = 0.5
+	root.add_child(over)
+	over.build_box(Transform3D(Basis(), Vector3(2, 2, 2)), Vector3(1.5, 1.5, 1.5), 40)
+	var far_hit := over.raycast(Vector3(2, 10, 2), Vector3.DOWN, 30.0)
+	check(not far_hit.is_empty() and far_hit.material == 40, "an id past the cap survives the edit and the mesh (material %d)" % far_hit.get("material", -1))
+	over.free()
+
+	# The shader's own MATERIAL_SLOTS literal must agree with what the C++ packs.
+	var shader_text := FileAccess.get_file_as_string("res://addons/dk_voxel/voxel_terrain.gdshader")
+	var slots_re := RegEx.create_from_string("MATERIAL_SLOTS\\s*=\\s*(\\d+)")
+	var found := slots_re.search(shader_text)
+	check(found != null and packed != null and found.get_string(1).to_int() == packed.get_layers(),
+			"the shader's MATERIAL_SLOTS matches the packed array layer count (%s vs %s)" % [found, packed])
+
+	# A world with no material set at all still gets bindable arrays.
+	var bare_world := VoxelWorld.new()
+	var bare_mat := ShaderMaterial.new()
+	bare_mat.shader = shader
+	bare_world.material = bare_mat
+	var bare_packed: Texture2DArray = bare_mat.get_shader_parameter("albedo_tex")
+	check(bare_packed != null and bare_packed.get_layers() == 32, "no material set still packs 32 layers")
+	bare_world.free()
+	tex_world.free()
+	odd_world.free()
+
 	# Every changed edit announces the shape's global bounds.
 	var edits: Array = []
 	w.terrain_edited.connect(func(aabb: AABB, result: Dictionary) -> void: edits.append([aabb, result]))

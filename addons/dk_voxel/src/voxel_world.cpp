@@ -64,7 +64,7 @@ void VoxelWorld::ensure_volume() {
 		}
 		for (dkv::WorldState::Chunk &c : st->chunks) c.version++;
 	}
-	apply_hardness();
+	dkv::apply_hardness(*st);
 	st->need_scan = true;
 }
 
@@ -78,46 +78,6 @@ dkv::WorldState::Chunk *VoxelWorld::find_chunk(int cx, int cy, int cz) {
 
 // Viewers sharing our World3D drive LOD, collision and streaming. Without one, the active camera does,
 // with the world's own collision distance and a view distance that reaches the last LOD band.
-
-Ref<VoxelMaterialDef> VoxelWorld::material_def(int id) const {
-	TypedArray<VoxelMaterialDef> mats = st->material_set.is_valid() ? st->material_set->get_materials() : TypedArray<VoxelMaterialDef>();
-	Ref<VoxelMaterialDef> m;
-	if (id >= 0 && id < (int)mats.size()) m = mats[id];
-	if (!m.is_valid() && !mats.is_empty()) m = mats[0]; // missing id (or a null entry): entry 0
-	if (!m.is_valid()) m.instantiate(); // no set, or an empty one: grey default
-	return m;
-}
-
-void VoxelWorld::apply_hardness() {
-	if (!st->vol) return;
-	memset(st->vol->hardness, 0, sizeof(st->vol->hardness));
-	if (!st->material_set.is_valid() || st->material_set->get_materials().is_empty()) return;
-	for (int i = 0; i < 256; i++) st->vol->hardness[i] = (uint8_t)material_def(i)->get_hardness();
-}
-
-void VoxelWorld::push_material_uniforms() {
-	ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(st->material.ptr());
-	if (!sm) return;
-	PackedColorArray ca, cb;
-	Array params;
-	for (int i = 0; i < MATERIAL_SLOTS; i++) {
-		Ref<VoxelMaterialDef> m = material_def(i);
-		ca.push_back(m->get_color_a());
-		cb.push_back(m->get_color_b());
-		params.push_back(Vector4(m->get_pattern_scale(), m->get_roughness(), m->get_metallic(), m->get_emission()));
-	}
-	sm->set_shader_parameter("color_a", ca);
-	sm->set_shader_parameter("color_b", cb);
-	sm->set_shader_parameter("params", params);
-}
-
-
-
-
-// Endless streaming: unload what no viewer wants, then queue a generate job for every wanted chunk that
-// is not loaded. The extra chunk of margin is loaded so the chunks viewers see have all 26 neighbours.
-
-// Pick each chunk's LOD from its distance to the nearest viewer and queue whatever is out of date.
 
 void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	if (r.job.gen != st->generation) return; // queued before a reset(): never touch the new world
@@ -405,16 +365,22 @@ void VoxelWorld::set_material(const Ref<Material> &m) {
 	st->material = m;
 	for (dkv::WorldState::Chunk &c : st->chunks)
 		if (c.mesh.is_valid()) RenderingServer::get_singleton()->mesh_surface_set_material(c.mesh, 0, m.is_valid() ? m->get_rid() : RID());
-	push_material_uniforms();
+	dkv::apply_material_set(*st);
 }
 void VoxelWorld::set_generator(const Ref<VoxelGenerator> &g) {
 	st->generator = g;
 	st->generator_class = g.is_valid() ? g->get_class() : String();
 }
+void VoxelWorld::_materials_changed() {
+	dkv::apply_hardness(*st);
+	dkv::apply_material_set(*st);
+}
+
 void VoxelWorld::set_material_set(const Ref<VoxelMaterialSet> &s) {
+	if (st->material_set.is_valid()) st->material_set->disconnect("changed", callable_mp(this, &VoxelWorld::_materials_changed));
 	st->material_set = s;
-	apply_hardness();
-	push_material_uniforms();
+	if (st->material_set.is_valid()) st->material_set->connect("changed", callable_mp(this, &VoxelWorld::_materials_changed));
+	_materials_changed();
 }
 void VoxelWorld::set_lod1_distance(float v) { st->lod1_distance = v; st->need_scan = true; }
 void VoxelWorld::set_lod2_distance(float v) { st->lod2_distance = v; st->need_scan = true; }
