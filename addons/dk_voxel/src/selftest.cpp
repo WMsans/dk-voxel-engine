@@ -14,6 +14,7 @@
 using namespace dkv;
 
 static const float ID[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+static const uint64_t DEMO_WORLD_HASH = 0x6312024949a38932ull; // recorded on the pre-refactor tree
 static int failures = 0;
 #define CHECK(cond, ...) \
 	do { \
@@ -80,6 +81,17 @@ static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &l
 
 static Soup mesh_all(const Volume &v, const std::function<int(int, int, int)> &lod) {
 	return mesh_all(v, lod, {v.bmin[0], v.bmin[1], v.bmin[2]}, {v.bmax[0], v.bmax[1], v.bmax[2]});
+}
+
+// FNV-1a over every chunk's serialised bytes. Any change to generated terrain, or to the block layout the
+// core picks, moves this number.
+static uint64_t hash_volume(const Volume &v) {
+	uint64_t h = 1469598103934665603ull;
+	for (int z = v.bmin[2]; z < v.bmax[2]; z++)
+		for (int y = v.bmin[1]; y < v.bmax[1]; y++)
+			for (int x = v.bmin[0]; x < v.bmax[0]; x++)
+				for (uint8_t c : v.serialize_chunk(x, y, z)) { h ^= c; h *= 1099511628211ull; }
+	return h;
 }
 
 int main() {
@@ -155,8 +167,11 @@ int main() {
 		Volume v(8, 4, 8, 0.5f);
 		auto t0 = std::chrono::steady_clock::now();
 		v.fill_all(&g, 8);
+		printf("  world hash %016llx\n", (unsigned long long)hash_volume(v));
 		double gen = ms_since(t0);
 		Soup a = mesh_all(v, lod0), b = mesh_all(v, mixed), c = mesh_all(v, [](int, int, int) { return 2; });
+		CHECK(hash_volume(v) == DEMO_WORLD_HASH, "world hash %016llx, want %016llx",
+				(unsigned long long)hash_volume(v), (unsigned long long)DEMO_WORLD_HASH);
 		int n = (v.bmax[0] - v.bmin[0]) * (v.bmax[1] - v.bmin[1]) * (v.bmax[2] - v.bmin[2]);
 		printf("  generate %.0f ms; %d chunks: lod0 %ld tris %.2f ms/chunk, mixed %ld, lod2 %ld tris %.2f ms/chunk\n", gen, n, a.tris, a.ms / n, b.tris, c.tris, c.ms / n);
 		CHECK(a.tris > 10000, "no terrain");
