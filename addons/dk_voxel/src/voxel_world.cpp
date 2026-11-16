@@ -324,7 +324,9 @@ void VoxelWorld::scan() {
 			float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
 			if (v == 0 || dist < d) d = dist;
 			if (dx * dx + dz * dz <= vw.view_distance * vw.view_distance && std::fabs(dy) <= vw.vertical_view_distance) in_mesh = true;
-			if (dist < (c.collision ? vw.collision_distance + hyst : vw.collision_distance)) want_coll = true;
+			// Bodies only exist at LOD0: never ask for one past the LOD1 band, or the chunk is re-queued forever.
+			const float coll = MIN(vw.collision_distance, lod1_distance - cs);
+			if (dist < (c.collision ? coll + hyst : coll)) want_coll = true;
 		}
 		if (!in_mesh) {
 			if (c.lod < 0) continue; // margin ring: loaded so inner chunks have neighbours, never meshed
@@ -369,7 +371,8 @@ void VoxelWorld::apply(Result &r) {
 	if (r.job.gen != generation) return; // queued before a reset(): never touch the new world
 	if (r.job.is_gen) {
 		if (Chunk *c = find_chunk(r.job.key.x, r.job.key.y, r.job.key.z)) c->gen_queued = false;
-		if (r.has && !r.job.stored.is_empty()) store.erase(r.job.key); // loaded again: drop our copy
+		// A restored chunk keeps its store entry: it is the authoritative copy until an edit overwrites it.
+		if (r.has && r.job.stored.is_empty()) store.erase(r.job.key);
 		need_scan = true; // a new chunk may complete a neighbour's 26
 		return;
 	}
@@ -636,8 +639,13 @@ bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
 	if (!vol || workers.empty() || active_viewers.empty()) return false;
 	if (need_scan) scan();
 	Transform3D inv = gx().affine_inverse();
-	Vector3 p0 = inv.xform(aabb.position), p1 = inv.xform(aabb.position + aabb.size); // the world node may be rotated
-	Vector3 lmin = p0.min(p1), lmax = p0.max(p1);
+	// The world node may be rotated: transform all 8 corners, as do_edit() does for terrain_edited.
+	Vector3 lmin(1e20f, 1e20f, 1e20f), lmax(-1e20f, -1e20f, -1e20f);
+	for (int i = 0; i < 8; i++) {
+		Vector3 p = inv.xform(aabb.position + Vector3(i & 1 ? aabb.size.x : 0.0f, i & 2 ? aabb.size.y : 0.0f, i & 4 ? aabb.size.z : 0.0f));
+		lmin = lmin.min(p);
+		lmax = lmax.max(p);
+	}
 	const float cs = dkv::CHUNK * vol->cell;
 	int cmin[3], cmax[3];
 	for (int i = 0; i < 3; i++) {

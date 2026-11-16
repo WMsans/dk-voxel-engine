@@ -32,6 +32,7 @@ var fly := false
 var gold := 0.0
 var cooldown := 0.0
 var spawned := false
+var spawn_token := 0
 var shot_path := ""
 var debris: Array[RigidBody3D] = []
 var debris_mats := {}
@@ -63,17 +64,26 @@ func _new_world(world_seed: int) -> void:
 	generator.seed = world_seed
 	world.reset()
 	spawned = false
-	_spawn()
+	spawn_token += 1 # a quick second R must not leave the old spawn building ruins
+	_spawn(spawn_token)
 
 
 ## Puts the player on the ground at the origin, then builds the ruins, once the area is streamed in.
-func _spawn() -> void:
+func _spawn(token: int) -> void:
 	var at := Vector3.ZERO
+	# Move the player (and its viewer) to the spawn point before waiting: the origin is outside every
+	# viewer's distance after flying away, so waiting there would time out.
+	player.position = at + Vector3.UP * 20.0
+	player.velocity = Vector3.ZERO
 	await _wait_ready(AABB(at + Vector3(-32, 0, -32), Vector3(64, 64, 64)), false) # ground and ruins
+	if token != spawn_token:
+		return
 	player.position = _ground(at) + Vector3.UP * 3.0
 	player.velocity = Vector3.ZERO
 	_build_ruins(at + Vector3(14.0, 0, -6.0))
 	await _wait_ready(AABB(player.position + Vector3(-8, -2, -8), Vector3(16, 12, 16)), true) # under the player
+	if token != spawn_token:
+		return
 	spawned = true
 
 

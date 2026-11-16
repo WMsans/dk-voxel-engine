@@ -192,6 +192,17 @@ func _initialize() -> void:
 	var back := w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
 	check(not back.is_empty() and back.position.y < ground_y - 2.5, "endless crater survives unload (y %.2f -> %.2f)" % [ground_y, back.get("position", Vector3.ZERO).y])
 
+	# A restored chunk stays authoritative: a second unload/reload must keep the crater too.
+	v.position = Vector3(600, 40, 0)
+	for i in 900:
+		await process_frame
+		if w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0).is_empty():
+			break
+	v.position = Vector3(0, 40, 0)
+	check(await await_ready(w4, area), "endless area reloads a second time")
+	var back2 := w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
+	check(not back2.is_empty() and back2.position.y < ground_y - 2.5, "endless crater survives two unload/reload round trips (y %.2f -> %.2f)" % [ground_y, back2.get("position", Vector3.ZERO).y])
+
 	# reset() twice while workers are busy: no stale result may reach the new world.
 	var busy := 0
 	for i in 2:
@@ -202,6 +213,48 @@ func _initialize() -> void:
 	check(await await_ready(w4, area), "endless area is ready after two resets")
 	w4.free()
 	v.free()
+
+	# Collision bodies only exist at LOD0, so a viewer whose collision distance reaches past LOD1 must
+	# not keep re-queueing LOD1 chunks for a body that can never be built.
+	var w5 := VoxelWorld.new()
+	w5.cell_size = 0.5
+	var gen5 := DemoTerrainGenerator.new()
+	gen5.seed = 5
+	w5.generator = gen5
+	root.add_child(w5)
+	var v5 := VoxelViewer.new()
+	v5.position = Vector3(0, 40, 0)
+	v5.collision_distance = 400.0
+	root.add_child(v5)
+	check(await await_ready(w5, AABB(Vector3(-4, 0, -4), Vector3(8, 64, 8))), "wide collision area around the viewer is ready")
+	check(await await_idle(w5), "wide collision world settled")
+	w5.set_lod1_distance(w5.get_lod1_distance()) # a no-op property set still forces a rescan
+	await process_frame
+	await process_frame
+	check(w5.get_pending_count() == 0, "collision clamp: a rescan leaves far chunks alone (%d pending)" % w5.get_pending_count())
+	w5.free()
+	v5.free()
+
+	# A rotated world node must transform the whole AABB, not just two opposite corners.
+	var w6 := VoxelWorld.new()
+	w6.cell_size = 0.5
+	w6.rotation_degrees.y = 30.0
+	var gen6 := DemoTerrainGenerator.new()
+	gen6.seed = 6
+	w6.generator = gen6
+	root.add_child(w6)
+	var v6 := VoxelViewer.new()
+	v6.position = Vector3(0, 40, 0) # at the world origin, so this is its local position too
+	v6.view_distance = 160.0
+	v6.vertical_view_distance = 96.0
+	root.add_child(v6)
+	check(await await_ready(w6, AABB(Vector3(-4, 0, -4), Vector3(8, 64, 8))), "rotated world area around the viewer is ready")
+	check(await await_idle(w6), "rotated world settled")
+	# This global square's local corners sit ~193 m from the viewer (outside the 160 m view distance),
+	# while the two-corner diagonal stays inside: all 8 corners must be transformed.
+	check(not w6.is_area_ready(AABB(Vector3(-100, 0, -100), Vector3(200, 64, 200)), false), "rotated world transforms all 8 corners of the area")
+	w6.free()
+	v6.free()
 
 	print("ALL GODOT TESTS PASSED" if failed == 0 else "FAILED (%d)" % failed)
 	quit(1 if failed else 0)
