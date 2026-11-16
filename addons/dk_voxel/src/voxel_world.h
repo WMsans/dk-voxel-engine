@@ -30,9 +30,6 @@ class VoxelWorld : public Node3D {
 	// Keeps an edited chunk that is about to be unloaded: on disk when save_directory is set, else (or when
 	// the write fails) compressed in `store`. `try_disk` is false when a write was just attempted and failed.
 
-	// One zstd file per modified chunk: `<dir>/<x>_<y>_<z>.dkvc` (the directory is passed in: workers read a
-	// snapshot taken at queue time). read_chunk_file() is false when there is no file or its header does not
-	// match this world (it pushes an error in that case).
 
 
 	void apply(dkv::WorldState::Result &r);

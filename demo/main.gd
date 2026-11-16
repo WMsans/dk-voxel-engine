@@ -116,7 +116,8 @@ func _make_material_set() -> VoxelMaterialSet:
 	rock.normal = load("res://demo/textures/rock_normal.png")
 	rock.color_a = Color(0.87, 0.86, 0.88)
 	rock.color_b = Color(1.0, 0.98, 0.95)
-	rock.pattern_scale = 0.5 # tiles per metre
+	rock.pattern_scale = 0.35 # tiles per metre: 8 m chunks x 0.35 is not a whole number, so a chunk-local
+	# UV space would show a seam every 8 m — this value keeps that regression visible
 	set.materials = defs
 	return set
 

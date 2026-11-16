@@ -220,11 +220,16 @@ func _initialize() -> void:
 	odd[0] = bare
 	var odd_set := VoxelMaterialSet.new()
 	odd_set.materials = odd
+	# A set first, then a material: this ShaderMaterial starts with nothing packed, so a pack that is skipped
+	# leaves albedo_tex unset and this fails.
 	var odd_world := VoxelWorld.new()
-	odd_world.material = shader_mat
+	var odd_mat := ShaderMaterial.new()
+	odd_mat.shader = shader
 	odd_world.material_set = odd_set
-	packed = shader_mat.get_shader_parameter("albedo_tex")
-	check(packed != null and packed.get_layers() == 32, "mixed sizes and an over-long set still pack 32 layers")
+	odd_world.material = odd_mat
+	var odd_packed: Texture2DArray = odd_mat.get_shader_parameter("albedo_tex")
+	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 256,
+			"mixed sizes and an over-long set pack 32 layers at the common size (%s)" % [odd_packed])
 
 	# An id past the cap is legal voxel data: it must mesh and render without error and must not wrap.
 	var over := VoxelWorld.new()

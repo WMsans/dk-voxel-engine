@@ -47,7 +47,8 @@ Properties:
   game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
   albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
   `demo/textures/` plus `demo/main.gd` for the working example. `pattern_scale` is tiles per metre. A
-  material with no textures gets a built-in grain and a flat normal. Ids run to 32; a voxel carrying a
+  material with no textures gets a built-in grain and a flat normal. The shader's `normal_strength`
+  uniform scales the normal map if it reads too strong at a given tiling. Ids run to 32; a voxel carrying a
   higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
   set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey
   default. Hardness 255 is unbreakable and an erase needs `power >= hardness`.
@@ -117,9 +118,10 @@ replaces it).
 
    `dk_sources` are the addon's library `.cpp` files (`selftest.cpp` is a host-side test and is not in
    the list): they compile with your `env` and flags, and their objects land in
-   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h` and
-   `voxel_resources.h` live and the Godot-free core sits under `core/` (`core/voxel_generator.h`,
-   `core/voxel_volume.h`, `core/voxel_types.h`). The addon's own entry point (`src/entry.cpp`, which
+   `addons/dk_voxel/build/obj`. `dk_include` is the addon's `src/`, where `register_types.h`,
+   `voxel_world.h` and `voxel_resources.h` live, `voxel_materials.h` holds `VoxelMaterialDef` and
+   `VoxelMaterialSet`, and the Godot-free core sits under `core/` (`core/voxel_generator.h`,
+   `core/voxel_volume.h`, `core/voxel_types.h`, `core/noise.h`). The addon's own entry point (`src/entry.cpp`, which
    defines `dk_voxel_library_init`) is deliberately not in the list: your game's library supplies its own
    entry symbol.
 

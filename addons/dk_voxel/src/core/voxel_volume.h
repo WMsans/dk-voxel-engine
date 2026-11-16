@@ -55,7 +55,7 @@ public:
 	Voxel get(int x, int y, int z) const; // missing chunk or outside bounds = air, locked against fill_chunk
 
 private:
-	struct Chunk; // defined in volume.cpp
+	struct Chunk; // defined in voxel_volume.cpp
 	std::unordered_map<ChunkKey, std::unique_ptr<Chunk>, ChunkKeyHash> chunks;
 	mutable std::shared_mutex mtx; // ponytail: one global lock; per-chunk locks if workers contend.
 

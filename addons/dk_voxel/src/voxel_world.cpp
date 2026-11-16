@@ -2,17 +2,9 @@
 // thread uploads results to the RenderingServer and (near the viewer) to static trimesh bodies.
 #include "voxel_world.h"
 
-#include <godot_cpp/classes/camera3d.hpp>
-#include <godot_cpp/classes/dir_access.hpp>
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/physics_server3d.hpp>
-#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
-#include <godot_cpp/classes/scene_tree.hpp>
-#include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/time.hpp>
-#include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/world3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
@@ -22,14 +14,6 @@
 #include <thread>
 
 using namespace godot;
-
-// The shader samples 32 materials; missing ids read as entry 0.
-static const int MATERIAL_SLOTS = 32;
-
-// Save file header: magic, format version, the volume's cell size, the generator class name, then the
-// core's serialised chunk. One zstd-compressed file per modified chunk.
-static const uint32_t DKVC_MAGIC = 0x43564B44; // 'DKVC', little-endian
-static const uint16_t DKVC_VERSION = 1;
 
 void VoxelWorld::ensure_volume() {
 	if (st->vol) return;
