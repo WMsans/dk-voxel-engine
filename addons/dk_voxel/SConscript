@@ -11,12 +11,14 @@
 # build tree. `dk_include` is the addon's `src/`, where the headers live (and where the game's
 # `#include "register_types.h"` resolves). The addon's own GDExtension entry symbol is `src/entry.cpp`,
 # which is deliberately left out: the game's library provides its own. The addon's own SConstruct adds it.
-# The SConscript also appends the addon's `-O3` to `env` (the mesher is the hot path even in a
-# template_debug build), so every source built with that `env`, the game's own included, is optimised.
+# The SConscript also appends `-O3` to the caller's `env`, so every source built with that `env` is
+# affected, the game's own sources included. godot-cpp appends its `-O2`/`-O0` to `CCFLAGS`, which SCons
+# puts after `CXXFLAGS` on the command line, so the effective level is godot-cpp's, not this one.
 Import("env")
 
-# The mesher is the hot path: -O3 even in a template_debug build. Appended here rather than in the
-# addon's SConstruct so every caller gets it; being in `env`, it covers all sources built with it.
+# The mesher is the hot path, so this appends -O3 even in a template_debug build. godot-cpp's own -O2/-O0
+# goes on CCFLAGS, which SCons puts after CXXFLAGS, so the effective level is godot-cpp's; and because
+# the flag lands on the caller's `env`, it also applies to the game's own sources, not only the addon's.
 env.Append(CXXFLAGS=["-O3"])
 
 here = Dir(".")

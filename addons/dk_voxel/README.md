@@ -42,7 +42,8 @@ Properties:
   stream in around the viewers and unload behind them.
 - `generator` — a `VoxelGenerator`; none means air. `DemoTerrainGenerator` has `seed` and `height`.
 - `material_set` — a `VoxelMaterialSet`: one `VoxelMaterialDef` per material id, with colour, pattern,
-  roughness, metallic, emission and hardness. Missing ids read as entry 0; hardness 255 is unbreakable
+  roughness, metallic, emission and hardness. In a non-empty set an id without a def reads as entry 0;
+  with no set, or an empty one, every id gets a zero-hardness grey default. Hardness 255 is unbreakable
   and an erase needs `power >= hardness`.
 - `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
 - `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
@@ -71,7 +72,9 @@ var hit := world.raycast(from, dir, 14.0)  # {position, normal, material}; march
 box in world space and `result` is the dictionary the edit method returned (`removed` per material id in
 m³, `volume`, `changed`). `is_area_ready(aabb, need_collision = true)` is false until every chunk under
 `aabb` (global) is loaded and meshed at its LOD, and, with `need_collision`, has a collision body unless
-it has no surface — hold a spawn, a teleport or a test on it instead of guessing frame counts.
+it has no surface — hold a spawn, a teleport or a test on it instead of guessing frame counts. It is
+also false while there is no viewer and no camera, since nothing is streaming. Bodies only exist at LOD0,
+so an area reaching past the collision radius (clamped to the LOD1 band) needs `need_collision = false`.
 
 ```gdscript
 world.terrain_edited.connect(_on_terrain_edited)   # audio, AI, quests, debris
