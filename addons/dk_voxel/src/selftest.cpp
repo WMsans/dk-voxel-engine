@@ -16,7 +16,8 @@
 using namespace dkv;
 
 static const float ID[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-static const uint64_t DEMO_WORLD_HASH = 0x6312024949a38932ull; // recorded on the pre-refactor tree
+static const uint64_t DEMO_WORLD_HASH = 0xc7cee77b1f580a40ull; // without FP contraction (see SConscript); the old
+// 0x6312024949a38932 was recorded by a clang -march=native build, where FMA changes the noise
 static int failures = 0;
 #define CHECK(cond, ...) \
 	do { \

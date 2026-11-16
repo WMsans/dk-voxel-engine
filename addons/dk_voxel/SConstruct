@@ -20,6 +20,6 @@ Default(env.SharedLibrary("bin/libdk_voxel" + suffix + env["SHLIBSUFFIX"], sourc
 
 # Core self-test: host toolchain only (volume/mesher have no Godot dependency).
 t = Environment()
-t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread"], LINKFLAGS=["-pthread"])
+t.Append(CXXFLAGS=["-O2", "-g", "-std=c++17", "-pthread", "-ffp-contract=off"], LINKFLAGS=["-pthread"])
 t.VariantDir("build/test", "src", duplicate=0)
 Alias("selftest", t.Program("build/selftest", source=["build/test/core/voxel_volume.cpp", "build/test/demo_terrain.cpp", "build/test/core/voxel_mesher.cpp", "build/test/selftest.cpp"]))

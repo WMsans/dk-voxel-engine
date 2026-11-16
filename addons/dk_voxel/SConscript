@@ -20,6 +20,11 @@ Import("env")
 # goes on CCFLAGS, which SCons puts after CXXFLAGS, so the effective level is godot-cpp's; and because
 # the flag lands on the caller's `env`, it also applies to the game's own sources, not only the addon's.
 env.Append(CXXFLAGS=["-O3"])
+# Generators must give bit-identical terrain on every machine: an endless world regenerates unloaded chunks
+# next to saved ones. Fused multiply-add (clang's default contraction, or any -march with FMA) changes the
+# noise's rounding, so contraction is off. MSVC does not contract unless asked.
+if not env.get("is_msvc", False):
+	env.Append(CXXFLAGS=["-ffp-contract=off"])
 
 here = Dir(".")
 src = here.Dir("src")
