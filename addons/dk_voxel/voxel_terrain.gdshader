@@ -20,10 +20,14 @@ uniform float normal_strength = 1.0;
 uniform float rim = 0.35;
 
 varying vec3 vpos;
+varying vec3 vnrm;
 
 void vertex() {
 	// World space: VERTEX is chunk-relative, and a chunk-local texture phase seams at every border.
 	vpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// The projection must be chosen from a world-space normal too. fragment()'s NORMAL is in view space:
+	// choosing from it picks the side projections for a floor seen from above, which smears the texture.
+	vnrm = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 }
 
 // Sharpened triplanar weights, so a face mostly uses one projection.
@@ -52,7 +56,7 @@ vec3 tri_normal(int id, vec3 p, vec3 n, vec3 w, float scale) {
 }
 
 void fragment() {
-	vec3 n = normalize(NORMAL);
+	vec3 n = normalize(vnrm);
 	vec3 w = tri_weights(n);
 	int ia = clamp(int(COLOR.r * 255.0 + 0.5), 0, MATERIAL_SLOTS - 1);
 	int ib = clamp(int(COLOR.g * 255.0 + 0.5), 0, MATERIAL_SLOTS - 1);
@@ -68,7 +72,7 @@ void fragment() {
 
 	vec3 na = tri_normal(ia, vpos, n, w, pa.x);
 	vec3 nb = ia == ib ? na : tri_normal(ib, vpos, n, w, pb.x);
-	NORMAL = normalize(mix(n, normalize(mix(na, nb, t)), normal_strength));
+	NORMAL = normalize((VIEW_MATRIX * vec4(mix(n, normalize(mix(na, nb, t)), normal_strength), 0.0)).xyz); // back to view space
 
 	float ao = COLOR.a;
 	ALBEDO = albedo * mix(0.7, 1.0, ao);
