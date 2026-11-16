@@ -27,20 +27,9 @@ class VoxelWorld : public Node3D {
 	Ref<VoxelMaterialDef> material_def(int id) const;
 	void apply_hardness();
 	void push_material_uniforms();
-	int thread_count() const { return st->threads > 0 ? st->threads : MAX(1, (int)std::thread::hardware_concurrency() - 2); }
-	// The wanted LOD for a distance, the one definition scan() and is_area_ready() share.
-	int lod_at(float d) const { return d < st->lod1_distance ? 0 : d < st->lod2_distance ? 1 : 2; }
-	void start_workers();
-	void stop_workers();
 
-	// Collects the VoxelViewers that share our World3D (the active camera when there is none).
-	void update_viewers();
 	dkv::WorldState::Chunk *find_chunk(int cx, int cy, int cz);
-	void worker();
 
-	// Endless streaming: unload what no viewer wants (keeping edits in `store`), then queue generate
-	// jobs for the wanted set. Bounded worlds keep every chunk and never call this.
-	void stream_endless();
 	// Keeps an edited chunk that is about to be unloaded: on disk when save_directory is set, else (or when
 	// the write fails) compressed in `store`. `try_disk` is false when a write was just attempted and failed.
 
@@ -48,8 +37,6 @@ class VoxelWorld : public Node3D {
 	// snapshot taken at queue time). read_chunk_file() is false when there is no file or its header does not
 	// match this world (it pushes an error in that case).
 
-	// Pick each chunk's LOD from its distance to the viewer and queue whatever is out of date.
-	void scan();
 
 	void apply(dkv::WorldState::Result &r);
 

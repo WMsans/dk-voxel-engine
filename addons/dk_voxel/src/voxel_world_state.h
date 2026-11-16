@@ -110,6 +110,10 @@ struct WorldState {
 	int stat_meshes = 0, stat_bodies = 0, stat_jobs = 0;
 	double stat_ms = 0;
 
+	int thread_count() const { return threads > 0 ? threads : MAX(1, (int)std::thread::hardware_concurrency() - 2); }
+	// The wanted LOD for a distance, the one definition scan() and is_area_ready() share.
+	int lod_at(float d) const { return d < lod1_distance ? 0 : d < lod2_distance ? 1 : 2; }
+
 	// Chunk index <-> chunk coordinate, for the bounded world ensure_volume() builds.
 	int ncx() const { return vol->bmax[0] - vol->bmin[0]; }
 	int ncy() const { return vol->bmax[1] - vol->bmin[1]; }
@@ -121,6 +125,14 @@ struct WorldState {
 // voxel_chunks.cpp: chunk RID lifecycle.
 void free_chunk(WorldState &st, WorldState::Chunk &c, bool body_only = false);
 void upload_chunk(WorldState &st, VoxelWorld &world, WorldState::Chunk &c, const MeshData &m, const Transform3D &xf, bool collision);
+
+// voxel_stream.cpp: viewers, streaming, LOD scanning and the worker pool.
+void update_viewers(WorldState &st, VoxelWorld &world);
+void scan(WorldState &st);
+void stream_endless(WorldState &st);
+void worker(WorldState &st);
+void start_workers(WorldState &st);
+void stop_workers(WorldState &st);
 
 // voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.
 String chunk_file_path(const ChunkKey &key, const String &dir);
