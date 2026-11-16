@@ -1,6 +1,6 @@
 // Godot-facing resources: terrain generators and the material set that feeds the terrain shader.
 #pragma once
-#include "voxel_core.h"
+#include "core/voxel_volume.h"
 
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/resource.hpp>

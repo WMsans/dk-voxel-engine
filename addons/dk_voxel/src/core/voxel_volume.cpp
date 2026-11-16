@@ -1,4 +1,4 @@
-#include "voxel_core.h"
+#include "voxel_volume.h"
 
 #include <algorithm>
 #include <atomic>

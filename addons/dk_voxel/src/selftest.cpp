@@ -1,6 +1,7 @@
 // Core self-test: scons selftest && build/selftest
 #include "demo_generator.h"
-#include "voxel_core.h"
+#include "core/voxel_volume.h"
+#include "core/voxel_generator.h"
 
 #include <atomic>
 #include <chrono>

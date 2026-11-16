@@ -1,7 +1,7 @@
 // VoxelWorld: Godot node around dkv::Volume. Worker threads mesh 16^3-cell chunks nearest-first; the main
 // thread uploads results to the RenderingServer and (near the viewer) to static trimesh bodies.
 #pragma once
-#include "voxel_core.h"
+#include "core/voxel_volume.h"
 #include "voxel_resources.h"
 
 #include <godot_cpp/classes/material.hpp>

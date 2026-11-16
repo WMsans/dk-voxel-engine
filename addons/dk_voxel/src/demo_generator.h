@@ -1,6 +1,6 @@
 // The demo terrain generator: today's hills, caves and ore, as a dkv::Generator.
 #pragma once
-#include "voxel_core.h"
+#include "core/voxel_volume.h"
 
 namespace dkv {
 

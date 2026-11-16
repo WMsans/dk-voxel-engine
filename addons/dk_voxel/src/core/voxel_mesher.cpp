@@ -1,5 +1,5 @@
 // Dual contouring mesher: chunk-local mesh data, seams bit-exact across chunk borders and LOD changes.
-#include "voxel_core.h"
+#include "voxel_volume.h"
 
 #include <algorithm>
 #include <cmath>

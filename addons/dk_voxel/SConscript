@@ -26,11 +26,11 @@ src = here.Dir("src")
 obj = here.Dir("build/obj")
 env.VariantDir(obj, src, duplicate=0)
 sources = [obj.File(name) for name in (
+	"core/voxel_mesher.cpp",
+	"core/voxel_volume.cpp",
 	"demo_generator.cpp",
-	"mesher.cpp",
 	"register_types.cpp",
 	"voxel_resources.cpp",
 	"voxel_world.cpp",
-	"volume.cpp",
 )]
 Return("sources", "src")
