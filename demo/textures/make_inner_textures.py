@@ -23,7 +23,7 @@ MAP = {
 	"rubble": "breakstone",  # brick crushed to grit
 	"cracked_crystal": "ice_crack",  # crystal split along facets
 }
-KINDS = {"albedo": "basecolor", "normal": "normal", "roughness": "roughness", "ao": "ambientOcclusion"}
+KINDS = {"albedo": "basecolor", "normal": "normal", "roughness": "roughness", "ao": "ambientOcclusion", "height": "height"}
 
 for name, folder in MAP.items():
 	for kind, src_kind in KINDS.items():

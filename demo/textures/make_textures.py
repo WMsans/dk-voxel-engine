@@ -56,4 +56,5 @@ for name, (asset, tint, gain) in MAP.items():
 	save(f"{name}_normal.png", load("normal", asset))
 	save(f"{name}_roughness.png", load("roughness", asset))
 	save(f"{name}_ao.png", load("ambientOcclusion", asset))
-	print(f"{name}: {asset} basecolor + normal + roughness + ao")
+	save(f"{name}_height.png", load("height", asset))
+	print(f"{name}: {asset} basecolor + normal + roughness + ao + height")
