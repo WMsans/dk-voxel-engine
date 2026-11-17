@@ -10,6 +10,7 @@
 
 #include <godot_cpp/classes/rendering_server.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace godot;
@@ -49,6 +50,18 @@ bool in_reach(const WorldState &st, int k, Vector3 c, float margin = 0.0f) {
 		const float r = v.view_distance * (float)(1 << k) + margin, h = v.vertical_view_distance + (k ? 2.0f * s : 0.0f) + margin;
 		const float dx = c.x - v.pos.x, dz = c.z - v.pos.z;
 		if (dx * dx + dz * dz <= r * r && std::fabs(c.y - v.pos.y) <= h) return true;
+	}
+	return false;
+}
+
+// Every near chunk under level-1 chunk `q` is inside one viewer's near field, so `q` hands over to them (scan()'s
+// in_mesh test, applied to its farthest child centers).
+bool near_inside(const WorldState &st, const ChunkKey &q) {
+	const float cs = level_size(st, 0), f = (float)fan(1);
+	auto reach = [&](int k, float p) { return std::max(std::fabs((k * f + 0.5f) * cs - p), std::fabs((k * f + f - 0.5f) * cs - p)); };
+	for (const WorldState::Viewer &v : st.active_viewers) {
+		const float dx = reach(q.x, v.pos.x), dz = reach(q.z, v.pos.z);
+		if (dx * dx + dz * dz <= v.view_distance * v.view_distance && reach(q.y, v.pos.y) <= v.vertical_view_distance) return true;
 	}
 	return false;
 }
@@ -283,6 +296,25 @@ void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldSt
 		queue_far_mesh(st, k, c.key, jobs); // edited again while it was meshing
 	}
 	push_jobs(st, jobs);
+}
+
+bool near_skirts(const WorldState &st, const ChunkKey &key) {
+	if (st.far.empty()) return false;
+	const float cs = level_size(st, 0), m = 4.0f * cs; // every child of a neighbour's parent is within 4 chunks per axis
+	const Vector3 c = (Vector3(key.x, key.y, key.z) + Vector3(0.5f, 0.5f, 0.5f)) * cs;
+	for (const WorldState::Viewer &v : st.active_viewers) { // quick out: deep inside the near field
+		const float r = v.view_distance - m * 1.4143f;
+		const float dx = c.x - v.pos.x, dz = c.z - v.pos.z;
+		if (r > 0 && dx * dx + dz * dz <= r * r && std::fabs(c.y - v.pos.y) + m <= v.vertical_view_distance) return false;
+	}
+	const ChunkKey own = parent(0, key);
+	for (int z = -1; z <= 1; z++)
+		for (int y = -1; y <= 1; y++)
+			for (int x = -1; x <= 1; x++) {
+				const ChunkKey q = parent(0, ChunkKey(key.x + x, key.y + y, key.z + z));
+				if (!(q == own) && !near_inside(st, q)) return true;
+			}
+	return false;
 }
 
 } // namespace dkv

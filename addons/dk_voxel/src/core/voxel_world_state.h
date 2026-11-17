@@ -41,6 +41,7 @@ struct WorldState {
 		Vector3 offset; // chunk origin in metres, relative to the world node (mesh vertices are chunk-relative)
 		int8_t lod = -1; // LOD on screen, -1 = never meshed
 		bool collision = false; // the mesh on screen was built with collision
+		bool skirts = false; // near field: the mesh on screen has skirts (see near_skirts)
 		bool queued = false;
 		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
 		bool visible = true; // the instance's visibility, as last pushed to the RenderingServer
@@ -73,7 +74,7 @@ struct WorldState {
 		float prio = 0;
 		int32_t index = -1;
 		int8_t lod = 0;
-		bool collision = false, urgent = false;
+		bool collision = false, urgent = false, skirts = false;
 		uint32_t version = 0;
 		bool operator<(const Job &o) const { return prio > o.prio; }
 	};
@@ -169,6 +170,9 @@ void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldSt
 // A level-k chunk was meshed (pass it as `c`) or unloaded: puts the right level on screen there.
 void chunk_changed(WorldState &st, int k, const ChunkKey &key, WorldState::Chunk *c = nullptr);
 void refresh_visibility(WorldState &st); // after st.shown changed
+// A near chunk needs skirts only where it meets a level-1 chunk drawn coarse: near seams are bit-exact, and a skirt
+// there only pokes through thin dug walls and shows from inside the ground.
+bool near_skirts(const WorldState &st, const ChunkKey &key);
 int visibility_errors(WorldState &st); // chunks whose visibility differs from a from-scratch recomputation; for tests
 
 // voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.

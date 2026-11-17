@@ -339,6 +339,7 @@ func _initialize() -> void:
 	check(await await_idle(w4), "endless world settled after the first load")
 	check(w4.get_visibility_errors() == 0, "far levels: every chunk shows the right level after the first load (%d wrong)" % w4.get_visibility_errors())
 	var base := w4.get_stats()
+	check(base.skirted_meshes > 0 and base.skirted_meshes * 2 < base.meshes, "near skirts only where level 1 takes over (%d of %d meshes)" % [base.skirted_meshes, base.meshes])
 	print("  ..  endless at x = 0: %d chunks, %d meshes, %d bodies, %d pending" % [base.chunks, base.meshes, base.bodies, base.pending])
 	var g := w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
 	check(not g.is_empty(), "endless raycast hits the ground (y = %.2f)" % g.get("position", Vector3.ZERO).y)

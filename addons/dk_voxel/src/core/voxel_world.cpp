@@ -96,6 +96,7 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 		c.collision = r.job.collision;
 	}
 	c.lod = r.job.lod;
+	c.skirts = r.job.skirts;
 	dkv::chunk_changed(*st, 0, c.key, &c);
 }
 
@@ -380,6 +381,9 @@ Dictionary VoxelWorld::get_stats() {
 	int64_t far_chunks = 0;
 	for (const dkv::WorldState::FarLevel &L : st->far) far_chunks += (int64_t)L.chunks.size();
 	d["far_chunks"] = far_chunks;
+	int64_t skirted = 0; // near meshes with skirts: only the ring that meets level 1
+	for (const dkv::WorldState::Chunk &c : st->chunks) skirted += c.skirts && c.tris > 0;
+	d["skirted_meshes"] = skirted;
 	d["pending"] = get_pending_count();
 	d["mesh_ms"] = st->stat_jobs ? st->stat_ms / st->stat_jobs : 0.0;
 	d["threads"] = (int)st->workers.size();

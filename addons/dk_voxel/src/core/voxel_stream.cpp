@@ -112,7 +112,7 @@ void worker(WorldState &st) {
 			r.has = true;
 		} else {
 			r.has = st.vol->mesh_chunk(key.x, key.y, key.z, r.job.lod, r.mesh);
-			if (r.has && !st.far.empty()) add_skirts(r.mesh, 2.0f * st.vol->cell); // where the near field meets level 1
+			if (r.has && r.job.skirts) add_skirts(r.mesh, 2.0f * st.vol->cell); // where the near field meets level 1
 		}
 		r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		std::lock_guard lk(st.qm);
@@ -250,8 +250,9 @@ void scan(WorldState &st) {
 			want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
 		}
 		if (!want_coll && c.body.is_valid()) free_chunk(st, c, true);
+		const bool skirts = in_mesh ? dkv::near_skirts(st, c.key) : c.skirts;
 		bool stale = c.applied_version != c.version;
-		if (!stale && c.lod == want && (c.collision || !want_coll)) continue;
+		if (!stale && c.lod == want && c.skirts == skirts && (c.collision || !want_coll)) continue;
 		if (c.queued && c.queued_version == c.version) continue;
 		// Last: 27 locked lookups, so only for the few chunks that would queue a job, never all loaded ones.
 		if (!st.vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
@@ -265,6 +266,7 @@ void scan(WorldState &st) {
 		j.index = i;
 		j.lod = (int8_t)want;
 		j.collision = want_coll;
+		j.skirts = skirts;
 		j.urgent = urgent;
 		j.version = c.version;
 		add.push_back(std::move(j));
