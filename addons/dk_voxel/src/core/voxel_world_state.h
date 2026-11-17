@@ -43,6 +43,7 @@ struct WorldState {
 		bool collision = false; // the mesh on screen was built with collision
 		bool queued = false;
 		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
+		bool visible = true; // the instance's visibility, as last pushed to the RenderingServer
 		uint32_t version = 1, queued_version = 0, applied_version = 0; // version bumps on every edit
 		int32_t tris = 0;
 	};
@@ -62,6 +63,7 @@ struct WorldState {
 	struct Job {
 		uint64_t gen = 0; // the world generation that queued it; results from an older one are dropped
 		bool is_gen = false; // endless: fill/restore a chunk instead of meshing it
+		int8_t level = 0; // 0 = the near volume, k = far[k - 1]
 		ChunkKey key;
 		PackedByteArray stored;
 		uint32_t stored_size = 0;
@@ -87,6 +89,18 @@ struct WorldState {
 	String save_directory; // empty = edits never reach disk; the unload store differs, the path is the same
 	String generator_class; // `generator`'s class name in save headers, empty when there is none
 	std::vector<Viewer> active_viewers;
+	// Far field (endless only), the way voxy and VoxelLodTerrain do it: level k = 1..far_levels is a coarse copy of the
+	// world, cell * 2^k, filled straight from the generator and reaching view_distance * 2^k. A level-k chunk covers
+	// exactly 2x2x2 level-(k-1) chunks and hands over to them once all eight are meshed (see update_visibility), so
+	// each level costs about the same and the view distance doubles per level. No collision, saves or raycasts.
+	struct FarLevel {
+		std::unique_ptr<Volume> vol;
+		std::unordered_map<ChunkKey, Chunk, ChunkKeyHash> chunks;
+		std::vector<Vector3i> streamed_at; // the viewers' chunks at this level when it was last streamed
+	};
+	std::vector<FarLevel> far; // far[k - 1] = level k
+	int far_levels = 6;
+	uint32_t need_vis = ~0u; // bit k: level k's visibility may have changed (update_visibility)
 	std::shared_ptr<const Generator> active_generator; // rebuilt by ensure_volume(), read by the workers
 	Ref<Material> material;
 	Ref<VoxelGenerator> generator;
@@ -141,6 +155,14 @@ void stream_endless(WorldState &st);
 void worker(WorldState &st);
 void start_workers(WorldState &st);
 void stop_workers(WorldState &st);
+// voxel_far.cpp: the far-field levels and which level's chunk is on screen.
+void create_far(WorldState &st);
+void free_far(WorldState &st);
+void stream_far(WorldState &st);
+void queue_far_mesh(WorldState &st, int k, const ChunkKey &key, std::vector<WorldState::Job> &out);
+void push_jobs(WorldState &st, std::vector<WorldState::Job> &jobs);
+void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldState::Result &r);
+void update_visibility(WorldState &st, bool world_visible);
 
 // voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.
 String chunk_file_path(const ChunkKey &key, const String &dir);

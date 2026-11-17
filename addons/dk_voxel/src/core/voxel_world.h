@@ -78,6 +78,8 @@ public:
 
 	void set_material(const Ref<Material> &m);
 	Ref<Material> get_material() const { return st->material; }
+	// The packed material textures the shader samples: 0 albedo, 1 normal, 2 roughness, 3 AO (one layer per id).
+	Ref<Texture2DArray> get_material_array(int kind) const { return kind >= 0 && kind < 4 ? st->material_arrays[kind] : Ref<Texture2DArray>(); }
 	void set_generator(const Ref<VoxelGenerator> &g);
 	Ref<VoxelGenerator> get_generator() const { return st->generator; }
 	void set_save_directory(const String &v) { st->save_directory = v; }
@@ -104,4 +106,7 @@ public:
 	float get_collision_distance() const { return st->collision_distance; }
 	void set_collision_layer(uint32_t v);
 	uint32_t get_collision_layer() const { return st->collision_layer; }
+	// Coarse far-field levels (endless worlds): each doubles the view distance. 0 = off. Applies on reset().
+	void set_far_levels(int v) { st->far_levels = v; }
+	int get_far_levels() const { return st->far_levels; }
 };

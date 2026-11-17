@@ -67,6 +67,15 @@ Properties:
 - `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
   (0 = cores − 2) and LOD/collision tuning.
+- `far_levels` — endless worlds only: coarse far-field levels beyond the viewers' `view_distance`, default 6
+  (≈ 11 km with the camera fallback; 0 = off; applies on `reset()`). Level k samples the generator at
+  `cell_size · 2^k` and reaches `view_distance · 2^k`, so each level costs about the same and the view
+  distance doubles per level (the nested-LOD scheme of voxy and Distant Horizons). A level hands an area to the
+  finer one only once all of it is meshed, so streaming never shows holes; skirts hide the cracks where levels
+  meet. Far terrain has no collision and is not saved: an edit is mirrored into the levels fine enough to show
+  it, and lasts there until that far chunk unloads. Their vertical reach is `vertical_view_distance` plus two
+  chunks rather than doubling, so from very high up the ground below is drawn coarse: raise the viewer's
+  `vertical_view_distance` for flying games. Give the camera a `far` that reaches the horizon.
 
 Changing `cell_size`, `bounds_size` or `generator` takes effect on the next `reset()`; `material_set`
 applies immediately, to the hardness table and the shader uniforms.

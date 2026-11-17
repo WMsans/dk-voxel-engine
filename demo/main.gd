@@ -14,7 +14,7 @@ extends Node3D
 @onready var player: CharacterBody3D = $Player
 @onready var hud: CanvasLayer = $HUD
 
-var profile := "level"
+var profile := "terrain"
 var spawn_token := 0
 var shot_path := ""
 

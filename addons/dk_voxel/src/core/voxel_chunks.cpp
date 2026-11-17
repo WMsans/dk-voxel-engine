@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/world3d.hpp>
 
+#include <algorithm>
 #include <cstring>
 
 using namespace godot;
@@ -69,6 +70,7 @@ void upload_chunk(WorldState &st, VoxelWorld &world, WorldState::Chunk &c, const
 	if (!c.instance.is_valid()) {
 		c.instance = rs->instance_create2(c.mesh, world.get_world_3d()->get_scenario());
 		rs->instance_set_transform(c.instance, xf);
+		c.visible = true;
 	}
 	st.stat_tris += ni / 3 - c.tris;
 	c.tris = ni / 3;
@@ -79,10 +81,11 @@ void upload_chunk(WorldState &st, VoxelWorld &world, WorldState::Chunk &c, const
 	}
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	PackedVector3Array faces;
-	faces.resize(ni);
+	const int nc = (int)std::min(m.idx.size(), m.skirt_from); // skirts are for the eye only
+	faces.resize(nc);
 	Vector3 *fw = faces.ptrw();
 	const Vector3 *vr = verts.ptr();
-	for (int i = 0; i < ni; i++) fw[i] = vr[m.idx[i]];
+	for (int i = 0; i < nc; i++) fw[i] = vr[m.idx[i]];
 	Dictionary data;
 	data["faces"] = faces;
 	data["backface_collision"] = false;

@@ -74,8 +74,13 @@ struct MeshData {
 	std::vector<float> pos, nrm; // xyz relative to the chunk origin, in world units
 	std::vector<uint8_t> col; // r = material A, g = material B, b = blend A->B, a = ambient occlusion
 	std::vector<int32_t> idx; // clockwise front faces (Godot convention)
-	void clear() { pos.clear(); nrm.clear(); col.clear(); idx.clear(); }
+	size_t skirt_from = SIZE_MAX; // idx from here on are skirts (add_skirts): drawn, never collided with
+	void clear() { pos.clear(); nrm.clear(); col.clear(); idx.clear(); skirt_from = SIZE_MAX; }
 };
+
+// Folds every open edge of a chunk mesh (its border with the next chunk) `depth` into the surface, so a
+// neighbour meshed at another resolution meets a strip instead of a crack. voxel_mesher.cpp.
+void add_skirts(MeshData &m, float depth);
 
 enum Shape { SPHERE, BOX, CYLINDER };
 enum Mode { ERASE, BUILD, SMOOTH };

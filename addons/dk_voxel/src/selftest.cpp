@@ -347,6 +347,23 @@ int main() {
 		CHECK(v.get(2, 2, 2).d == 0, "outside every part is air");
 	}
 
+	printf("skirts\n");
+	{ // a closed surface inside one chunk gets none; a sphere cut by chunk borders gets a strip on each cut edge
+		Volume v(2, 2, 2, 0.5f);
+		v.edit(SPHERE, BUILD, {4, 4, 4}, {2.5f, 0, 0}, ID, 3, 0, 1, false); // inside chunk (0,0,0): 0..8 m
+		MeshData m;
+		v.mesh_chunk(0, 0, 0, 0, m);
+		size_t ni = m.idx.size();
+		add_skirts(m, 1.0f);
+		CHECK(ni > 0 && m.idx.size() == ni && m.skirt_from == ni, "closed mesh got skirts: %zu -> %zu", ni, m.idx.size());
+		v.edit(SPHERE, BUILD, {8, 8, 8}, {3, 0, 0}, ID, 3, 0, 1, false); // straddles all 8 chunks
+		v.mesh_chunk(0, 0, 0, 0, m);
+		ni = m.idx.size();
+		add_skirts(m, 1.0f);
+		CHECK(m.skirt_from == ni && m.idx.size() > ni && (m.idx.size() - ni) % 6 == 0, "cut mesh: %zu tris, %zu skirt", ni / 3, (m.idx.size() - ni) / 3);
+		CHECK(m.pos.size() / 3 == m.nrm.size() / 3 && m.col.size() == m.pos.size() / 3 * 4, "skirt vertex arrays disagree");
+	}
+
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);
 	return failures ? 1 : 0;
 }

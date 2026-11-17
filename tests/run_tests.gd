@@ -152,11 +152,18 @@ func _initialize() -> void:
 	var mw := VoxelWorld.new()
 	mw.material = sm
 	mw.material_set = shader_set
-	var color_a: PackedColorArray = sm.get_shader_parameter("color_a")
-	var color_b: PackedColorArray = sm.get_shader_parameter("color_b")
-	var params: Array = sm.get_shader_parameter("params")
-	check(color_a.size() == 32 and color_b.size() == 32 and params.size() == 32,
-			"material uniforms fill 32 slots (color_a %d, color_b %d, params %d)" % [color_a.size(), color_b.size(), params.size()])
+	# The world pushes these straight to the RenderingServer (never as ShaderMaterial properties), so read them
+	# there. The headless dummy renderer stores no material params: the check needs a real renderer.
+	var color_a: PackedColorArray = []
+	var params: Array = []
+	if DisplayServer.get_name() == "headless":
+		print("  skip  material uniforms (headless renderer stores no params; run without --headless)")
+	else:
+		color_a = RenderingServer.material_get_param(sm.get_rid(), "color_a")
+		var color_b: PackedColorArray = RenderingServer.material_get_param(sm.get_rid(), "color_b")
+		params = RenderingServer.material_get_param(sm.get_rid(), "params")
+		check(color_a.size() == 32 and color_b.size() == 32 and params.size() == 32,
+				"material uniforms fill 32 slots (color_a %d, color_b %d, params %d)" % [color_a.size(), color_b.size(), params.size()])
 	if color_a.size() == 32 and params.size() == 32:
 		var p0: Vector4 = params[0]
 		check(color_a[0].is_equal_approx(Color(0.25, 0.5, 0.75)) and is_equal_approx(p0.x, 0.3) and is_equal_approx(p0.y, 0.42),
@@ -177,10 +184,10 @@ func _initialize() -> void:
 	tex_set.materials = tex_defs
 	tex_world.material = shader_mat
 	tex_world.material_set = tex_set
-	var packed: Texture2DArray = shader_mat.get_shader_parameter("albedo_tex")
+	var packed: Texture2DArray = tex_world.get_material_array(0)
 	check(packed != null and packed.get_layers() == 32, "albedo packs 32 layers (%s)" % [packed])
-	var rough_packed: Texture2DArray = shader_mat.get_shader_parameter("roughness_tex")
-	var ao_packed: Texture2DArray = shader_mat.get_shader_parameter("ao_tex")
+	var rough_packed: Texture2DArray = tex_world.get_material_array(2)
+	var ao_packed: Texture2DArray = tex_world.get_material_array(3)
 	check(rough_packed != null and rough_packed.get_layers() == 32 and ao_packed != null and ao_packed.get_layers() == 32,
 			"roughness and AO pack 32 layers each (%s, %s)" % [rough_packed, ao_packed])
 	# get_layer_data() needs a renderer that keeps image data; --headless uses the dummy driver, which does
@@ -203,7 +210,7 @@ func _initialize() -> void:
 	var green_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
 	green_img.fill(Color(0.0, 1.0, 0.0))
 	def0.albedo = ImageTexture.create_from_image(green_img)
-	packed = shader_mat.get_shader_parameter("albedo_tex")
+	packed = tex_world.get_material_array(0)
 	if can_read:
 		check(packed.get_layer_data(0).get_pixel(0, 0).g > 0.9, "editing a def's texture reaches the shader")
 	else:
@@ -211,12 +218,12 @@ func _initialize() -> void:
 	packed_before = packed
 	var rough_before := rough_packed
 	def0.roughness_map = ImageTexture.create_from_image(green_img)
-	check(shader_mat.get_shader_parameter("roughness_tex") != rough_before, "editing a def's roughness map repacks the arrays")
+	check(tex_world.get_material_array(2) != rough_before, "editing a def's roughness map repacks the arrays")
 	var def0b := VoxelMaterialDef.new()
 	def0b.albedo = albedo_tex
 	var swapped: Array[VoxelMaterialDef] = [def0b]
 	tex_set.materials = swapped
-	packed = shader_mat.get_shader_parameter("albedo_tex")
+	packed = tex_world.get_material_array(0)
 	if can_read:
 		check(packed.get_layer_data(0).get_pixel(0, 0).r > 0.9, "replacing materials repacks")
 	else:
@@ -237,13 +244,13 @@ func _initialize() -> void:
 	var odd_set := VoxelMaterialSet.new()
 	odd_set.materials = odd
 	# A set first, then a material: this ShaderMaterial starts with nothing packed, so a pack that is skipped
-	# leaves albedo_tex unset and this fails.
+	# leaves the albedo array unset and this fails.
 	var odd_world := VoxelWorld.new()
 	var odd_mat := ShaderMaterial.new()
 	odd_mat.shader = shader
 	odd_world.material_set = odd_set
 	odd_world.material = odd_mat
-	var odd_packed: Texture2DArray = odd_mat.get_shader_parameter("albedo_tex")
+	var odd_packed: Texture2DArray = odd_world.get_material_array(0)
 	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 256,
 			"mixed sizes and an over-long set pack 32 layers at the common size (%s)" % [odd_packed])
 
@@ -269,7 +276,7 @@ func _initialize() -> void:
 	var bare_mat := ShaderMaterial.new()
 	bare_mat.shader = shader
 	bare_world.material = bare_mat
-	var bare_packed: Texture2DArray = bare_mat.get_shader_parameter("albedo_tex")
+	var bare_packed: Texture2DArray = bare_world.get_material_array(0)
 	check(bare_packed != null and bare_packed.get_layers() == 32, "no material set still packs 32 layers")
 	bare_world.free()
 	tex_world.free()
