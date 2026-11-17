@@ -1,9 +1,22 @@
-[gd_scene format=3 uid="uid://dtf4r61y1sm6k"]
+[gd_scene format=4 uid="uid://dtf4r61y1sm6k"]
 
 [ext_resource type="Script" uid="uid://ce16ebuvigfyl" path="res://demo/main.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://dp875x46jg5ke" path="res://demo/world.gd" id="2_world"]
 [ext_resource type="Script" uid="uid://d35teojhu51ei" path="res://demo/player.gd" id="3_player"]
 [ext_resource type="Script" uid="uid://nc5uhbtmsxbw" path="res://demo/hud.gd" id="4_hud"]
+[ext_resource type="VoxelMaterialSet" uid="uid://d1tvfsxrck1cn" path="res://demo/materials.tres" id="5_mats"]
+[ext_resource type="Shader" uid="uid://btm5lbw3oouf8" path="res://addons/dk_voxel/voxel_terrain.gdshader" id="6_shader"]
+[ext_resource type="PackedScene" path="res://demo/bomb.tscn" id="7_bomb"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_0.res" id="s0"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_1.res" id="s1"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_2.res" id="s2"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_3.res" id="s3"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_4.res" id="s4"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_5.res" id="s5"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_6.res" id="s6"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_7.res" id="s7"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_8.res" id="s8"]
+[ext_resource type="ArrayMesh" path="res://demo/shards/shard_9.res" id="s9"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 sky_top_color = Color(0.16, 0.36, 0.78, 1)
@@ -36,6 +49,10 @@ adjustment_enabled = true
 adjustment_contrast = 1.08
 adjustment_saturation = 1.25
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_terrain"]
+render_priority = 0
+shader = ExtResource("6_shader")
+
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
 height = 1.7
@@ -56,7 +73,11 @@ shadow_normal_bias = 1.4
 directional_shadow_max_distance = 160.0
 
 [node name="World" type="VoxelWorld" parent="." unique_id=1571118196]
+material = SubResource("ShaderMaterial_terrain")
+material_set = ExtResource("5_mats")
 script = ExtResource("2_world")
+shards = Array[Mesh]([ExtResource("s0"), ExtResource("s1"), ExtResource("s2"), ExtResource("s3"), ExtResource("s4"), ExtResource("s5"), ExtResource("s6"), ExtResource("s7"), ExtResource("s8"), ExtResource("s9")])
+bomb_scene = ExtResource("7_bomb")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1897108621]
 floor_max_angle = 0.872665

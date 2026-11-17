@@ -2,6 +2,7 @@
 #include "voxel_materials.h"
 
 #include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/texture2d_array.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -81,6 +82,10 @@ void dkv::apply_material_rules(WorldState &st) {
 void dkv::apply_material_set(WorldState &st) {
 	ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(st.material.ptr());
 	if (!sm) return;
+	// Everything goes straight to the RenderingServer, never through set_shader_parameter: these are derived from the
+	// material set, and as ShaderMaterial properties they would be saved (megabytes of texture arrays) with the material.
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const RID rid = sm->get_rid();
 
 	// Colours and parameters describe every slot and are cheap: always push them.
 	PackedColorArray ca, cb;
@@ -91,33 +96,39 @@ void dkv::apply_material_set(WorldState &st) {
 		cb.push_back(m->get_color_b());
 		params.push_back(Vector4(m->get_pattern_scale(), m->get_roughness(), m->get_metallic(), m->get_emission()));
 	}
-	sm->set_shader_parameter("color_a", ca);
-	sm->set_shader_parameter("color_b", cb);
-	sm->set_shader_parameter("params", params);
+	rs->material_set_param(rid, "color_a", ca);
+	rs->material_set_param(rid, "color_b", cb);
+	rs->material_set_param(rid, "params", params);
 
 	const TypedArray<VoxelMaterialDef> mats = st.material_set.is_valid() ? st.material_set->get_materials() : TypedArray<VoxelMaterialDef>();
 	if (mats.size() > MATERIAL_SLOTS)
 		UtilityFunctions::push_error("VoxelWorld: material set has " + String::num_int64(mats.size()) + " entries but the shader has " +
 				String::num_int64(MATERIAL_SLOTS) + " slots; the extra entries are ignored");
 
+	static const char *uniforms[4] = { "albedo_tex", "normal_tex", "roughness_tex", "ao_tex" };
 	const uint64_t fingerprint = texture_fingerprint(st.material_set);
-	if (fingerprint == st.material_fingerprint && sm->get_shader_parameter("albedo_tex").get_type() == Variant::OBJECT) return;
-	st.material_fingerprint = fingerprint;
-
-	const Ref<Image> grey = flat_image(Color(0.5f, 0.5f, 0.5f)), flat = flat_image(Color(0.5f, 0.5f, 1.0f)),
-			one = flat_image(Color(1.0f, 1.0f, 1.0f));
-	// One Texture2DArray per texture kind, layer = material id.
-	auto pack = [&](const char *uniform, Ref<Texture2D> (VoxelMaterialDef::*get)() const, const Ref<Image> &fallback) {
-		TypedArray<Ref<Image>> layers;
-		for (int i = 0; i < MATERIAL_SLOTS; i++) layers.push_back(layer_image((material_def(st.material_set, i).ptr()->*get)(), fallback));
-		Ref<Texture2DArray> array;
-		array.instantiate();
-		if (array->create_from_images(layers) == OK) sm->set_shader_parameter(uniform, array);
-	};
-	pack("albedo_tex", &VoxelMaterialDef::get_albedo, grey);
-	pack("normal_tex", &VoxelMaterialDef::get_normal, flat);
-	pack("roughness_tex", &VoxelMaterialDef::get_roughness_map, one);
-	pack("ao_tex", &VoxelMaterialDef::get_ao_map, one);
+	if (fingerprint != st.material_fingerprint || st.material_arrays[0].is_null()) {
+		st.material_fingerprint = fingerprint;
+		const Ref<Image> grey = flat_image(Color(0.5f, 0.5f, 0.5f)), flat = flat_image(Color(0.5f, 0.5f, 1.0f)),
+				one = flat_image(Color(1.0f, 1.0f, 1.0f));
+		// One Texture2DArray per texture kind, layer = material id.
+		auto pack = [&](int k, Ref<Texture2D> (VoxelMaterialDef::*get)() const, const Ref<Image> &fallback) {
+			TypedArray<Ref<Image>> layers;
+			for (int i = 0; i < MATERIAL_SLOTS; i++) layers.push_back(layer_image((material_def(st.material_set, i).ptr()->*get)(), fallback));
+			Ref<Texture2DArray> array;
+			array.instantiate();
+			if (array->create_from_images(layers) == OK) st.material_arrays[k] = array;
+		};
+		pack(0, &VoxelMaterialDef::get_albedo, grey);
+		pack(1, &VoxelMaterialDef::get_normal, flat);
+		pack(2, &VoxelMaterialDef::get_roughness_map, one);
+		pack(3, &VoxelMaterialDef::get_ao_map, one);
+	} else if (rid == st.material_pushed) {
+		return;
+	}
+	st.material_pushed = rid;
+	for (int k = 0; k < 4; k++)
+		if (st.material_arrays[k].is_valid()) rs->material_set_param(rid, uniforms[k], st.material_arrays[k]->get_rid());
 }
 
 void VoxelMaterialDef::_bind_methods() {

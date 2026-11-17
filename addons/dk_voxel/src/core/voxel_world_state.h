@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/texture2d_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -97,6 +98,10 @@ struct WorldState {
 	uint32_t collision_layer = 1;
 	bool expose_inner_material = true;
 	uint64_t material_fingerprint = 0; // the texture identity the packed arrays were built from
+	RID material_pushed; // the material the arrays were last pushed to
+	// The packed arrays live here, not in the material: the RenderingServer only holds their RIDs, and keeping them out
+	// of the ShaderMaterial's properties keeps the generated data out of any scene or .tres the material is saved in.
+	Ref<Texture2DArray> material_arrays[4];
 
 	std::priority_queue<Job> jobs;
 	std::vector<Result> results;

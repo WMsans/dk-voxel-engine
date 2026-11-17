@@ -1,28 +1,13 @@
 extends VoxelWorld
-## The demo world node: material set, terrain profile, ruins, and the debris and bombs of an edit.
+## The demo world node: terrain profile, ruins, and the debris and bombs of an edit.
+## Assets live in the scene: materials.tres (material set; ids 9+ are the broken insides a dig exposes),
+## shards/shard_N.res (debris meshes, baked by shards/make_shards.gd) and bomb.tscn.
 
-# name, albedo, normal/roughness/AO, tiles per metre, roughness factor, metallic, emission, hardness, inner material.
-# Inner material (Bananza's InnerMaterial): what a dig turns the carved surface into, -1 = itself. Ids 9+ are the
-# broken insides, textured from terrain_textures_vol2 by demo/textures/make_inner_textures.py.
-const MATERIALS := [
-	["Default", "soil", "soil", 0.5, 0.9, 0.0, 0.0, 0, -1],
-	["Grass", "grass", "grass", 0.22, 0.95, 0.0, 0.0, 0, 9],
-	["Soil", "soil", "soil", 0.3, 0.95, 0.0, 0.0, 0, 10],
-	["Rock", "rock", "rock", 0.16, 0.8, 0.0, 0.0, 1, 11],
-	["Sand", "sand", "sand", 0.4, 1.0, 0.0, 0.0, 0, -1],
-	["Gold", "gold", "gold", 0.35, 0.3, 1.0, 0.2, 1, -1],
-	["Bedrock", "bedrock", "bedrock", 0.14, 0.6, 0.0, 0.0, 255, -1],
-	["Brick", "brick", "brick", 0.3, 0.85, 0.0, 0.0, 1, 12],
-	["Crystal", "crystal", "crystal", 0.2, 0.15, 0.3, 1.2, 2, 13],
-	["Torn turf", "turf", "turf", 0.3, 0.95, 0.0, 0.0, 0, 10], # grass -> turf -> dug soil
-	["Dug soil", "dug_soil", "dug_soil", 0.3, 0.95, 0.0, 0.0, 0, -1],
-	["Broken rock", "broken_rock", "broken_rock", 0.25, 0.85, 0.0, 0.0, 1, -1],
-	["Rubble", "rubble", "rubble", 0.35, 0.9, 0.0, 0.0, 1, -1],
-	["Cracked crystal", "cracked_crystal", "cracked_crystal", 0.25, 0.2, 0.3, 1.0, 2, -1],
-]
-const CELL := 0.5
 const GROUND_FROM := 400.0 # raycast down from here to find the ground: endless worlds have no height
 const LEVEL_PATH := "res://demo/levels/mini_level.dkvl"
+
+@export var shards: Array[Mesh] = []
+@export var bomb_scene: PackedScene
 
 var procedural := DemoTerrainGenerator.new()
 var level := LevelTerrainGenerator.new()
@@ -30,15 +15,13 @@ var profile := "level"
 var gold := 0.0
 var debris: Array[RigidBody3D] = []
 var debris_mats := {}
-var rocks: Array[ArrayMesh] = []
-var rock_shapes: Array[Shape3D] = []
+var shard_shapes: Array[Shape3D] = []
 
 
 func _ready() -> void:
 	level.level_path = LEVEL_PATH
-	cell_size = CELL
-	material_set = _make_material_set()
-	material = _make_terrain_material()
+	for m in shards:
+		shard_shapes.append(m.create_convex_shape())
 
 
 func new_world(p_profile: String, world_seed: int) -> void:
@@ -86,37 +69,6 @@ func _material(id: int) -> VoxelMaterialDef:
 	return defs[id]
 
 
-func _make_material_set() -> VoxelMaterialSet:
-	var set := VoxelMaterialSet.new()
-	var defs: Array[VoxelMaterialDef] = []
-	for m in MATERIALS:
-		var d := VoxelMaterialDef.new()
-		d.name = m[0]
-		# Every surface is a real image file; tints are baked into the file by demo/textures/make_textures.py.
-		d.albedo = load("res://demo/textures/%s_albedo.png" % m[1])
-		d.normal = load("res://demo/textures/%s_normal.png" % m[2])
-		d.roughness_map = load("res://demo/textures/%s_roughness.png" % m[2])
-		d.ao_map = load("res://demo/textures/%s_ao.png" % m[2])
-		d.color_a = Color.WHITE # leave the albedo as authored: the tint ramp stays out of the way
-		d.color_b = Color.WHITE
-		d.pattern_scale = m[3]
-		d.roughness = m[4]
-		d.metallic = m[5]
-		d.emission = m[6]
-		d.hardness = m[7]
-		d.inner_material = m[8]
-		defs.append(d)
-	set.materials = defs
-	return set
-
-
-func _make_terrain_material() -> ShaderMaterial:
-	# Colours, textures and parameters all come from the material set; the shader needs no inputs of its own.
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://addons/dk_voxel/voxel_terrain.gdshader")
-	return mat
-
-
 ## Sharp-edged structures: the Hermite path of the mesher. Everything here is plain CSG on the voxel field.
 func build_ruins(at: Vector3) -> void:
 	expose_inner_material = false # authored cuts: clean brick, not rubble
@@ -160,20 +112,16 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 		m.roughness = d.roughness
 		m.metallic = d.metallic
 		debris_mats[id] = m
-	if rocks.is_empty():
-		for i in 10:
-			rocks.append(_make_rock())
-			rock_shapes.append(rocks[i].create_convex_shape())
-	var r := randi() % rocks.size()
+	var r := randi() % shards.size()
 	var b := RigidBody3D.new()
 	var mi := MeshInstance3D.new()
-	mi.mesh = rocks[r]
+	mi.mesh = shards[r]
 	mi.material_override = debris_mats[id]
 	var cs := CollisionShape3D.new()
-	cs.shape = rock_shapes[r]
+	cs.shape = shard_shapes[r]
 	b.add_child(mi)
 	b.add_child(cs)
-	var size := randf_range(0.12, 0.4) # rocks are unit-ish; uniform scale keeps the convex shape valid
+	var size := randf_range(0.12, 0.4) # shards are unit-ish; uniform scale keeps the convex shape valid
 	mi.scale = Vector3.ONE * size
 	cs.scale = Vector3.ONE * size
 	b.mass = size * size * size * 25.0
@@ -190,57 +138,8 @@ func _spawn_fragment(at: Vector3, id: int, force: float) -> void:
 			b.queue_free())
 
 
-## A low-poly faceted chip like Bananza's Eft_Fragment primitives: a coarse sphere, squashed, its vertices
-## jittered and sliced flat by a couple of fracture planes, flat shaded.
-func _make_rock() -> ArrayMesh:
-	var sphere := SphereMesh.new()
-	sphere.radial_segments = randi_range(5, 7)
-	sphere.rings = randi_range(3, 4)
-	var arrays := sphere.get_mesh_arrays()
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var aspect := Vector3(randf_range(0.8, 1.3), randf_range(0.55, 1.0), randf_range(0.8, 1.3))
-	var cuts: Array[Plane] = []
-	for i in randi_range(1, 3):
-		cuts.append(Plane(Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized(), randf_range(0.15, 0.35)))
-	var moved := {} # seam/pole duplicates share a position: move them together so the chip stays closed
-	for i in verts.size():
-		var key := verts[i].snapped(Vector3.ONE * 0.001)
-		if not moved.has(key):
-			var v := (verts[i] + Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * 0.25) * aspect
-			for c in cuts:
-				v -= c.normal * maxf(c.distance_to(v), 0.0)
-			moved[key] = v
-		verts[i] = moved[key]
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_smooth_group(-1) # flat facets
-	for i in arrays[Mesh.ARRAY_INDEX]:
-		st.add_vertex(verts[i])
-	st.generate_normals()
-	return st.commit()
-
-
 func throw_bomb(from: Vector3, forward: Vector3) -> void:
-	var b := RigidBody3D.new()
-	var mi := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.3
-	sm.height = 0.6
-	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0.08, 0.08, 0.1)
-	m.emission_enabled = true
-	m.emission = Color(1.0, 0.3, 0.05)
-	sm.material = m
-	mi.mesh = sm
-	var cs := CollisionShape3D.new()
-	var sp := SphereShape3D.new()
-	sp.radius = 0.3
-	cs.shape = sp
-	b.add_child(mi)
-	b.add_child(cs)
-	b.collision_layer = 2
-	b.collision_mask = 1
-	b.continuous_cd = true
+	var b: RigidBody3D = bomb_scene.instantiate()
 	b.position = from - forward * 1.0
 	b.linear_velocity = -forward * 22.0 + Vector3.UP * 3.0
 	add_child(b)
