@@ -75,6 +75,8 @@ public:
 	Vector3 get_world_size() const;
 	int get_pending_count();
 	Dictionary get_stats();
+	// Test hook: chunks whose on-screen state differs from a from-scratch pass over every level. Always 0.
+	int get_visibility_errors() { return dkv::visibility_errors(*st); }
 
 	void set_material(const Ref<Material> &m);
 	Ref<Material> get_material() const { return st->material; }

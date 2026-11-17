@@ -226,7 +226,7 @@ int main() {
 		CHECK(v.is_modified(0, 0, 0), "edit did not mark the chunk");
 		MeshData before; v.mesh_chunk(0, 0, 0, 0, before);
 		auto bytes = v.serialize_chunk(0, 0, 0);
-		v.remove_chunk(0, 0, 0);
+		v.remove_chunks({ChunkKey(0, 0, 0)});
 		CHECK(!v.has_chunk(0, 0, 0) && !v.neighbors_ready(0, 0, 0), "remove");
 		CHECK(v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size()) && !v.is_modified(0, 0, 0), "restore");
 		MeshData after; v.mesh_chunk(0, 0, 0, 0, after);

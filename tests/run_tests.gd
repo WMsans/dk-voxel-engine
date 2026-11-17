@@ -337,6 +337,7 @@ func _initialize() -> void:
 	var area := AABB(Vector3(-4, 0, -4), Vector3(8, 64, 8))
 	check(await await_ready(w4, area), "endless area around the viewer is ready")
 	check(await await_idle(w4), "endless world settled after the first load")
+	check(w4.get_visibility_errors() == 0, "far levels: every chunk shows the right level after the first load (%d wrong)" % w4.get_visibility_errors())
 	var base := w4.get_stats()
 	print("  ..  endless at x = 0: %d chunks, %d meshes, %d bodies, %d pending" % [base.chunks, base.meshes, base.bodies, base.pending])
 	var g := w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
@@ -346,14 +347,23 @@ func _initialize() -> void:
 
 	v.position = Vector3(600, 40, 0)
 	var unloaded := false
+	var vis_errors := 0
 	for i in 900:
 		await process_frame
+		vis_errors += w4.get_visibility_errors() # mid-stream: levels load and unload around the move
 		if w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0).is_empty():
 			unloaded = true
 			break
 	check(unloaded, "far chunks unload when the viewer moves")
 	check(await await_ready(w4, AABB(Vector3(596, 0, -4), Vector3(8, 64, 8))), "endless area at x = 600 is ready")
 	check(await await_idle(w4), "endless world settled after the move")
+	check(vis_errors == 0 and w4.get_visibility_errors() == 0, "far levels: the right level stays on screen while the viewer teleports (%d wrong)" % (vis_errors + w4.get_visibility_errors()))
+	w4.visible = false
+	await process_frame
+	check(w4.get_visibility_errors() == 0, "far levels: a hidden world hides every chunk")
+	w4.visible = true
+	await process_frame
+	check(w4.get_visibility_errors() == 0, "far levels: a shown world brings the right level back")
 	var moved := w4.get_stats()
 	print("  ..  endless at x = 600: %d chunks, %d meshes, %d bodies, %d pending" % [moved.chunks, moved.meshes, moved.bodies, moved.pending])
 	check(moved.meshes <= base.meshes * 1.2 and moved.bodies <= base.bodies * 1.2,

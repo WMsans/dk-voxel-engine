@@ -44,6 +44,8 @@ struct WorldState {
 		bool queued = false;
 		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
 		bool visible = true; // the instance's visibility, as last pushed to the RenderingServer
+		bool split = false; // far levels: its children are all meshed and drawn in its place
+		bool out_of_reach = false; // far levels: generated but not meshed, because no viewer reached it yet
 		uint32_t version = 1, queued_version = 0, applied_version = 0; // version bumps on every edit
 		int32_t tris = 0;
 	};
@@ -90,9 +92,10 @@ struct WorldState {
 	String generator_class; // `generator`'s class name in save headers, empty when there is none
 	std::vector<Viewer> active_viewers;
 	// Far field (endless only), the way voxy and VoxelLodTerrain do it: level k = 1..far_levels is a coarse copy of the
-	// world, cell * 2^k, filled straight from the generator and reaching view_distance * 2^k. A level-k chunk covers
-	// exactly 2x2x2 level-(k-1) chunks and hands over to them once all eight are meshed (see update_visibility), so
-	// each level costs about the same and the view distance doubles per level. No collision, saves or raycasts.
+	// world, cell * 2^(k+1), filled straight from the generator and reaching view_distance * 2^k. A level-k chunk covers
+	// whole level-(k-1) chunks (4x4x4 near chunks, then 2x2x2) and hands over to them once all are meshed (see
+	// chunk_changed), so each level costs about the same and the view distance doubles per level. No collision, saves
+	// or raycasts.
 	struct FarLevel {
 		std::unique_ptr<Volume> vol;
 		std::unordered_map<ChunkKey, Chunk, ChunkKeyHash> chunks;
@@ -100,7 +103,8 @@ struct WorldState {
 	};
 	std::vector<FarLevel> far; // far[k - 1] = level k
 	int far_levels = 6;
-	uint32_t need_vis = ~0u; // bit k: level k's visibility may have changed (update_visibility)
+	bool need_far = false; // a far level still has to follow the viewers (stream_far does one level a frame)
+	bool shown = true; // the node's is_visible_in_tree(), as the chunk instances last saw it
 	std::shared_ptr<const Generator> active_generator; // rebuilt by ensure_volume(), read by the workers
 	Ref<Material> material;
 	Ref<VoxelGenerator> generator;
@@ -158,11 +162,14 @@ void stop_workers(WorldState &st);
 // voxel_far.cpp: the far-field levels and which level's chunk is on screen.
 void create_far(WorldState &st);
 void free_far(WorldState &st);
-void stream_far(WorldState &st);
+bool stream_far(WorldState &st); // restreams the finest level whose viewers moved; false = all levels follow
 void queue_far_mesh(WorldState &st, int k, const ChunkKey &key, std::vector<WorldState::Job> &out);
 void push_jobs(WorldState &st, std::vector<WorldState::Job> &jobs);
 void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldState::Result &r);
-void update_visibility(WorldState &st, bool world_visible);
+// A level-k chunk was meshed (pass it as `c`) or unloaded: puts the right level on screen there.
+void chunk_changed(WorldState &st, int k, const ChunkKey &key, WorldState::Chunk *c = nullptr);
+void refresh_visibility(WorldState &st); // after st.shown changed
+int visibility_errors(WorldState &st); // chunks whose visibility differs from a from-scratch recomputation; for tests
 
 // voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.
 String chunk_file_path(const ChunkKey &key, const String &dir);

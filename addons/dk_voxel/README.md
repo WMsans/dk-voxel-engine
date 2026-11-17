@@ -69,7 +69,7 @@ Properties:
   (0 = cores − 2) and LOD/collision tuning.
 - `far_levels` — endless worlds only: coarse far-field levels beyond the viewers' `view_distance`, default 6
   (≈ 11 km with the camera fallback; 0 = off; applies on `reset()`). Level k samples the generator at
-  `cell_size · 2^k` and reaches `view_distance · 2^k`, so each level costs about the same and the view
+  `cell_size · 2^(k+1)` and reaches `view_distance · 2^k`, so each level costs about the same and the view
   distance doubles per level (the nested-LOD scheme of voxy and Distant Horizons). A level hands an area to the
   finer one only once all of it is meshed, so streaming never shows holes; skirts hide the cracks where levels
   meet. Far terrain has no collision and is not saved: an edit is mirrored into the levels fine enough to show

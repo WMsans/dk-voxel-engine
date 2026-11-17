@@ -37,7 +37,7 @@ public:
 	// and the uniform voxel (2 bytes) or 1024 voxel bytes or 1024 + 512*9 Hermite bytes. Empty if missing.
 	std::vector<uint8_t> serialize_chunk(int cx, int cy, int cz) const;
 	bool deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size_t size); // false on bad data
-	void remove_chunk(int cx, int cy, int cz);
+	void remove_chunks(const std::vector<ChunkKey> &keys); // one lock for all: a writer waits for every meshing worker
 	bool is_modified(int cx, int cy, int cz) const;
 	void clear_modified(int cx, int cy, int cz);
 

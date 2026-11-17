@@ -148,9 +148,10 @@ bool Volume::deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size
 	return true;
 }
 
-void Volume::remove_chunk(int cx, int cy, int cz) {
+void Volume::remove_chunks(const std::vector<ChunkKey> &keys) {
+	if (keys.empty()) return;
 	std::unique_lock lk(mtx);
-	chunks.erase(ChunkKey(cx, cy, cz));
+	for (const ChunkKey &k : keys) chunks.erase(k);
 }
 
 bool Volume::is_modified(int cx, int cy, int cz) const {

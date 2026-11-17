@@ -125,6 +125,7 @@ void stream_endless(WorldState &st) {
 	const float cs = dkv::CHUNK * st.vol->cell;
 	const float margin = cs;
 	std::vector<dkv::WorldState::Job> gen;
+	std::vector<dkv::ChunkKey> gone;
 
 	for (int i = (int)st.chunks.size() - 1; i >= 0; i--) {
 		dkv::WorldState::Chunk &c = st.chunks[i];
@@ -140,16 +141,19 @@ void stream_endless(WorldState &st) {
 			}
 		}
 		if (wanted) continue;
-		store_chunk(st, c.key);
-		st.vol->remove_chunk(c.key.x, c.key.y, c.key.z);
+		const dkv::ChunkKey key = c.key;
+		store_chunk(st, key);
+		gone.push_back(key);
 		free_chunk(st, c);
-		st.chunk_lookup.erase(c.key);
+		st.chunk_lookup.erase(key);
 		if (i < (int)st.chunks.size() - 1) { // swap-remove; queued jobs carry a stale index and re-find by key
 			st.chunks[i] = std::move(st.chunks.back());
 			st.chunk_lookup[st.chunks[i].key] = i;
 		}
 		st.chunks.pop_back();
+		chunk_changed(st, 0, key);
 	}
+	st.vol->remove_chunks(gone);
 
 	for (const dkv::WorldState::Viewer &v : st.active_viewers) {
 		const float rh = v.view_distance + margin, rv = v.vertical_view_distance + margin, rh2 = rh * rh;
@@ -212,8 +216,7 @@ void scan(WorldState &st) {
 
 	if (!st.vol->bounded && st.need_stream) {
 		stream_endless(st);
-		stream_far(st);
-		st.need_vis = ~0u;
+		st.need_far = true;
 	}
 	st.need_stream = false;
 
