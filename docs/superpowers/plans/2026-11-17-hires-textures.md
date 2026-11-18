@@ -1,6 +1,6 @@
 # Hires Textures Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Every demo material packs a 1024 px layer built from `terrain_textures_vol2` (or the slop pack where it already is the source), and three slop materials join the set at ids 14–16.
 
@@ -29,41 +29,42 @@
 
 ### Task 1: 1024 in the packer and the suite
 
-- [ ] Change `tests/run_tests.gd`'s two size assertions from 256 to 1024; run the suite and watch it fail against the old library.
-- [ ] `TEXTURE_ARRAY_SIZE = 1024` in `voxel_materials.cpp`.
-- [ ] Rebuild the extension (`scons -j8 platform=macos arch=arm64 target=template_debug`) and run `godot --headless --path . -s tests/run_tests.gd`; expect `ALL GODOT TESTS PASSED`.
-- [ ] Commit.
+- [x] Change `tests/run_tests.gd`'s two size assertions from 256 to 1024; run the suite and watch it fail against the old library.
+- [x] `TEXTURE_ARRAY_SIZE = 1024` in `voxel_materials.cpp`.
+- [x] Rebuild the extension (`scons -j8 platform=macos arch=arm64 target=template_debug`) and run `godot --headless --path . -s tests/run_tests.gd`; expect `ALL GODOT TESTS PASSED`.
+- [x] Commit.
 
 ### Task 2: one vol2 build script at 1024
 
-- [ ] Rewrite `demo/textures/make_textures.py`: `SIZE = 1024`, one `MAP` of material → vol2 folder for the twelve sets below, TGA input, `albedo` tinted in linear space then re-encoded, the other four maps copied as data, output to `demo/textures/<name>/`; delete `make_inner_textures.py`.
+- [x] Rewrite `demo/textures/make_textures.py`: `SIZE = 1024`, one `MAP` of material → vol2 folder for the twelve sets below, TGA input, `albedo` tinted in linear space then re-encoded, the other four maps copied as data, output to `demo/textures/<name>/`; delete `make_inner_textures.py`.
 
   `grass→grass_01`, `soil→mud_01`, `rock→rock`, `sand→sand_01`, `gold→stones_02` (tint `1.0,0.78,0.25`, gain `1.35`), `bedrock→cliff_stone_02`, `crystal→ice`, `turf→ground_foliage_01`, `dug_soil→ground_crack_01`, `broken_rock→ground_stone_01`, `rubble→breakstone`, `cracked_crystal→ice_crack`.
-- [ ] Run it; expect twelve sets × five maps at 1024² RGBA8, no missing file.
-- [ ] `godot --headless --import --path .` so the changed files reimport (paths and uids unchanged).
-- [ ] Commit.
+- [x] Run it; expect twelve sets × five maps at 1024² RGBA8, no missing file.
+- [x] `godot --headless --import --path .` so the changed files reimport (paths and uids unchanged).
+- [x] Commit.
 
 ### Task 3: slop import at 1024, three new folders
 
-- [ ] `organize_material.sh`: `size=1024`, optional third argument for the output name (default: source basename), header comment updated.
-- [ ] Import four sets: `brick` (refresh at 1024), `check_rock → slop_check_rock`, `cracked_rock → slop_cracked_rock`, `grass → slop_grass`.
-- [ ] Check `demo/textures/grass/` is unchanged (`git status` clean for that folder) and that all four new folders have five 1024² PNGs.
-- [ ] `godot --headless --import --path .`; commit.
+- [x] `organize_material.sh`: `size=1024`, optional third argument for the output name (default: source basename), header comment updated.
+- [x] Import four sets: `brick` (refresh at 1024), `check_rock → slop_check_rock`, `cracked_rock → slop_cracked_rock`, `grass → slop_grass`.
+- [x] Check `demo/textures/grass/` is unchanged (`git status` clean for that folder) and that all four new folders have five 1024² PNGs.
+- [x] `godot --headless --import --path .`; commit.
 
 ### Task 4: three more materials in `materials.tres`
 
-- [ ] Add `ext_resource` entries for the twelve new slop textures (uids from their `.import` files) and three `VoxelMaterialDef` sub-resources — `Slop check rock` (id 14, `pattern_scale` 0.3, `roughness` 0.9, `hardness` 1), `Slop cracked rock` (15, same), `Slop grass` (16, `pattern_scale` 0.22, `roughness` 0.95, `hardness` 1) — and append them to `materials`.
-- [ ] `godot --headless --path . -s tests/run_tests.gd`; expect `ALL GODOT TESTS PASSED`.
-- [ ] Commit.
+- [x] Add `ext_resource` entries for the twelve new slop textures (uids from their `.import` files) and three `VoxelMaterialDef` sub-resources — `Slop check rock` (id 14, `pattern_scale` 0.3, `roughness` 0.9, `hardness` 1), `Slop cracked rock` (15, same), `Slop grass` (16, `pattern_scale` 0.22, `roughness` 0.95, `hardness` 1) — and append them to `materials`.
+- [x] `godot --headless --path . -s tests/run_tests.gd`; expect `ALL GODOT TESTS PASSED`.
+- [x] Commit.
 
 ### Task 5: proof
 
-- [ ] `cd addons/dk_voxel && scons -j8 selftest && ./build/selftest` → `ALL CORE TESTS PASSED`.
-- [ ] Load `demo/main.tscn` headless: the set reports 17 materials, the bound `albedo_tex` is 32 layers at 1024², and the four arrays' byte cost is as the spec states.
-- [ ] Shot one frame of the demo (`--shot`) and eyeball that terrain and the new ids render.
+- [x] `cd addons/dk_voxel && scons -j8 selftest && ./build/selftest` → `ALL CORE TESTS PASSED`.
+- [x] Load `demo/main.tscn` headless: the set reports 17 materials, the bound `albedo_tex` is 32 layers at 1024², and the four arrays' byte cost is as the spec states.
+- [x] Shot one frame of the demo (`--shot`) and eyeball that terrain and the new ids render.
 
 ## Ledger
 
 - `Ruling: Brick is not duplicated` — upstream `demo-polish` already imports the slop brick as id 7 through `organize_material.sh`, so a "Slop brick" id would be the same pixels twice. Cost if wrong: the user wanted a second, independently tuned brick material; adding it later is a resource edit, not a code change.
 - `Ruling: slop folders are prefixed` — the slop `grass` set would otherwise overwrite `demo/textures/grass/`, which id 1 needs. Cost if wrong: folder names differ from the source set names.
+- Proof (Task 5): suite green at 1024 (`ok the arrays are packed at the common size (1024x1024)`), `ALL CORE TESTS PASSED`, set loads with 17 materials, four arrays at 32 layers of 1024² = 682 MiB with mips, first pack 1.34 s, and the demo's three `--shot` views render terrain, stone detail and the far field.
 - `Ruling: Default shares Soil's pixels` — both entries point at the same texture files today, so vol2 `mud_01` is built once and referenced twice. Cost if wrong: Default cannot be tuned independently without a second import.

@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
 # Organizes one generated material folder (file names like brick_albedo_00002_.png) into the layout the
-# demo uses: <out>/<name>/<name>_<map>.png, 256x256 RGBA, newest numbered version of each map.
+# demo uses: <out>/<name>/<name>_<map>.png, TEXTURE_ARRAY_SIZE RGBA, newest numbered version of each map.
 #
 #   addons/dk_voxel/tools/organize_material.sh ~/Pictures/slops/terrain/brick
-#   addons/dk_voxel/tools/organize_material.sh ~/Pictures/slops/terrain/brick /some/other/textures
+#   addons/dk_voxel/tools/organize_material.sh ~/Pictures/slops/terrain/grass /some/other/textures slop_grass
+#
+# NAME defaults to the source folder's name; pass one when the material needs a different folder. Vol2-sourced
+# materials come from demo/textures/make_textures.py instead.
 #
 # Output defaults to demo/textures. albedo, normal, roughness and ao are required; height is copied when
 # present (the engine does not sample it yet). The texture/preview/junctions composites and the metalness
 # map are skipped: VoxelMaterialDef has a scalar metallic, not a map.
 set -euo pipefail
 
-src=${1:?usage: $0 SOURCE_DIR [OUTPUT_TEXTURES_DIR]}
+src=${1:?usage: $0 SOURCE_DIR [OUTPUT_TEXTURES_DIR] [NAME]}
 out=${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/demo/textures}
-size=256
-name=$(basename "${src%/}")
+size=1024 # must match TEXTURE_ARRAY_SIZE in addons/dk_voxel/src/core/voxel_materials.cpp
+srcname=$(basename "${src%/}")
+name=${3:-$srcname}
 
 [ -d "$src" ] || { echo "no such folder: $src" >&2; exit 1; }
 magick=$(command -v magick || command -v convert) || { echo "ImageMagick not found" >&2; exit 1; }
 
-# Newest <name>_<map>_<number>_.png, or an already organized <name>_<map>.png; empty when absent.
+# Newest <src>_<map>_<number>_.png, or an already organized <src>_<map>.png; empty when absent.
 newest() {
 	local map=$1 f n best="" best_n=-1
-	for f in "$src/${name}_${map}_"*.png "$src/${name}_${map}.png"; do
+	for f in "$src/${srcname}_${map}_"*.png "$src/${srcname}_${map}.png"; do
 		[ -f "$f" ] || continue
 		n=${f##*/}; n=${n%.png}; n=${n%_}; n=${n##*_}
 		[[ $n =~ ^[0-9]+$ ]] || n=0
@@ -30,18 +34,13 @@ newest() {
 	printf '%s' "$best"
 }
 
-declare -A picks
-for map in albedo normal roughness ao height; do
-	picks[$map]=$(newest "$map")
-	if [ -z "${picks[$map]}" ] && [ "$map" != height ]; then
-		echo "missing ${name}_${map} in $src" >&2
-		exit 1
-	fi
-done
-
 mkdir -p "$out/$name"
 for map in albedo normal roughness ao height; do
-	f=${picks[$map]}
+	f=$(newest "$map")
+	if [ -z "$f" ] && [ "$map" != height ]; then
+		echo "missing ${srcname}_${map} in $src" >&2
+		exit 1
+	fi
 	[ -n "$f" ] || continue
 	dest="$out/$name/${name}_${map}.png"
 	"$magick" "$f" -resize "${size}x${size}!" -alpha set -colorspace sRGB -strip PNG32:"$dest"
