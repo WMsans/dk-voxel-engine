@@ -46,7 +46,9 @@ def load(kind, asset):
 
 def save(name, rgb):
 	rgba = np.concatenate([rgb, np.ones((SIZE, SIZE, 1), np.float32)], axis=2)
-	Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA").save(os.path.join(OUT, name))
+	out_dir = os.path.join(OUT, name.rsplit("_", 1)[0])
+	os.makedirs(out_dir, exist_ok=True)
+	Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA").save(os.path.join(out_dir, name))
 
 
 for name, (asset, tint, gain) in MAP.items():

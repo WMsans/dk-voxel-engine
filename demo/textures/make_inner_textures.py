@@ -26,7 +26,8 @@ MAP = {
 KINDS = {"albedo": "basecolor", "normal": "normal", "roughness": "roughness", "ao": "ambientOcclusion", "height": "height"}
 
 for name, folder in MAP.items():
+	os.makedirs(os.path.join(OUT, name), exist_ok=True)
 	for kind, src_kind in KINDS.items():
 		img = Image.open(os.path.join(SRC, folder, f"T_{folder}_{src_kind}.tga")).convert("RGB").convert("RGBA")
-		img.resize((SIZE, SIZE), Image.LANCZOS).save(os.path.join(OUT, f"{name}_{kind}.png"))
+		img.resize((SIZE, SIZE), Image.LANCZOS).save(os.path.join(OUT, name, f"{name}_{kind}.png"))
 	print(f"{name}: {folder}")
