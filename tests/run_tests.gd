@@ -202,7 +202,7 @@ func _initialize() -> void:
 		check(rough_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99 and ao_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99,
 				"a def without maps packs flat 1.0 roughness and AO")
 	else:
-		check(packed.get_width() == 256 and packed.get_height() == 256, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
+		check(packed.get_width() == 1024 and packed.get_height() == 1024, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
 
 	# Swapping the texture in place repacks, and so does replacing the set's materials array. A repack gives a
 	# new array object, which is observable even when the layer data is not.
@@ -251,7 +251,7 @@ func _initialize() -> void:
 	odd_world.material_set = odd_set
 	odd_world.material = odd_mat
 	var odd_packed: Texture2DArray = odd_world.get_material_array(0)
-	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 256,
+	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 1024,
 			"mixed sizes and an over-long set pack 32 layers at the common size (%s)" % [odd_packed])
 
 	# An id past the cap is legal voxel data: it must mesh and render without error and must not wrap.

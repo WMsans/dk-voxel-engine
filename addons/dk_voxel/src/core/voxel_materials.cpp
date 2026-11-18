@@ -17,7 +17,7 @@ using namespace godot;
 namespace {
 
 // Every layer of a Texture2DArray shares one size and format.
-constexpr int TEXTURE_ARRAY_SIZE = 256;
+constexpr int TEXTURE_ARRAY_SIZE = 1024;
 
 // The layer a material with no texture gets: a flat colour, sized like the array so packing does not resize
 // it. A Texture2DArray needs a value in every slot; nothing here draws a pattern.
