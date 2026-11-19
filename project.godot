@@ -38,7 +38,7 @@ anti_aliasing/quality/use_taa=true
 
 leaf_bump_px={
 "type": "float",
-"value": 12.0
+"value": 20.0
 }
 leaf_seed={
 "type": "sampler2D",

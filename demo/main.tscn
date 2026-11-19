@@ -1,8 +1,7 @@
-[gd_scene format=3 uid="uid://dtf4r61y1sm6k"]
+[gd_scene format=4 uid="uid://dtf4r61y1sm6k"]
 
 [ext_resource type="Script" uid="uid://ce16ebuvigfyl" path="res://demo/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://demo/voxel_debris.gd" id="2_debris"]
-[ext_resource type="Script" path="res://demo/voxel_tools.gd" id="11_tools"]
+[ext_resource type="Script" uid="uid://cfg28d1481nve" path="res://demo/voxel_debris.gd" id="2_debris"]
 [ext_resource type="Script" uid="uid://d35teojhu51ei" path="res://demo/player.gd" id="3_player"]
 [ext_resource type="Script" uid="uid://nc5uhbtmsxbw" path="res://demo/hud.gd" id="4_hud"]
 [ext_resource type="VoxelMaterialSet" uid="uid://d1tvfsxrck1cn" path="res://demo/materials.tres" id="5_mats"]
@@ -11,6 +10,7 @@
 [ext_resource type="Script" uid="uid://o0hpuy73bhcv" path="res://demo/cel/cel_shading_post_process.gd" id="8_cel"]
 [ext_resource type="Script" uid="uid://yfvhss46j7tm" path="res://demo/cel/outline_post_process.gd" id="9_outline"]
 [ext_resource type="Script" uid="uid://dayqkuaj2qde8" path="res://demo/cel/leaf_seed_effect.gd" id="10_seed"]
+[ext_resource type="Script" uid="uid://ckcsn6i6nvtqr" path="res://demo/voxel_tools.gd" id="11_tools"]
 [ext_resource type="ArrayMesh" path="res://demo/shards/shard_0.res" id="s0"]
 [ext_resource type="ArrayMesh" path="res://demo/shards/shard_1.res" id="s1"]
 [ext_resource type="ArrayMesh" path="res://demo/shards/shard_2.res" id="s2"]
@@ -70,6 +70,12 @@ compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_seed
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_terrain"]
 render_priority = 0
 shader = ExtResource("6_shader")
+shader_parameter/leaf_material = -1
+shader_parameter/color_a = PackedColorArray(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+shader_parameter/color_b = PackedColorArray(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+shader_parameter/params = PackedVector4Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+shader_parameter/normal_strength = 1.0
+shader_parameter/rim = 0.35
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.4
@@ -96,7 +102,7 @@ directional_shadow_max_distance = 160.0
 material = SubResource("ShaderMaterial_terrain")
 material_set = ExtResource("5_mats")
 
-[node name="Debris" type="Node3D" parent="."]
+[node name="Debris" type="Node3D" parent="." unique_id=105273410]
 script = ExtResource("2_debris")
 shards = Array[Mesh]([ExtResource("s0"), ExtResource("s1"), ExtResource("s2"), ExtResource("s3"), ExtResource("s4"), ExtResource("s5"), ExtResource("s6"), ExtResource("s7"), ExtResource("s8"), ExtResource("s9")])
 material_set = ExtResource("5_mats")
@@ -123,7 +129,7 @@ omni_range = 14.0
 [node name="Viewer" type="VoxelViewer" parent="Player" unique_id=1579860662]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 
-[node name="Tools" type="Node" parent="Player" node_paths=PackedStringArray("world", "camera")]
+[node name="Tools" type="Node" parent="Player" unique_id=2060361308 node_paths=PackedStringArray("world", "camera")]
 script = ExtResource("11_tools")
 world = NodePath("../../World")
 camera = NodePath("../Camera3D")
