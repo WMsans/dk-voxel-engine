@@ -80,11 +80,12 @@ void fragment() {
 
 	// Grown leaf pixels borrow depth from slightly different leaf points, which the
 	// second derivative above amplifies into noise inside the grown band. Where any
-	// tap is grown, use a plain step instead: line on the nearer side wherever a
-	// tap is farther by more than the threshold (sky, ground, a farther leaf), so
-	// the line follows the scallops and not the mesh edge underneath.
+	// tap is grown, use a plain step instead: line wherever a tap differs by more
+	// than the threshold (sky, ground, a farther leaf), so the line follows the
+	// scallops and not the mesh edge underneath. Both sides of the step, like the
+	// Laplacian above, or leaf lines come out half as wide as the rest.
 	if (m != SCREEN_UV || l != tl || r != tr || u != tu || dn != td) {
-		float gap = max(max(zl, zr), max(zu, zd)) - c;
+		float gap = max(max(abs(zl - c), abs(zr - c)), max(abs(zu - c), abs(zd - c)));
 		edge = smoothstep(depth_threshold, depth_threshold * 2.0, gap);
 	}
 
