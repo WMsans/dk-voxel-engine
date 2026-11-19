@@ -11,6 +11,13 @@ godot --headless --path ../.. -s tests/run_tests.gd # engine tests (physics incl
 godot --path ../.. -- --shot=/tmp/shot.png          # three staged screenshots + fps
 ```
 
+The demo's scripts are separate pieces you can copy into a game one at a time. Each one needs only a
+`VoxelWorld` (or nothing) and is wired up in `demo/main.tscn` / `demo/main.gd`:
+`voxel_tools.gd` (dig/build/smooth/bomb tools, `dug` signal), `voxel_debris.gd` (fragments from an edit
+result), `bomb.gd` + `bomb.tscn`, `player.gd` (fly/walk body, no voxel code), `voxel_util.gd` (ground
+raycast, `wait_ready`, glb stamping), `beauty_shot.gd`, `cel/` (post-process passes). `main.gd` is the
+demo game itself: profiles, spawning, gold, the ruins and trees.
+
 ## Using it
 
 One node, `VoxelWorld`; generators are `VoxelGenerator` resources. Set the properties, `add_child`,
@@ -52,7 +59,7 @@ Properties:
   image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
   game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
   albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
-  `demo/textures/` plus `demo/world.gd` for the working example. `pattern_scale` is tiles per metre. A
+  `demo/textures/` plus `demo/materials.tres` for the working example. `pattern_scale` is tiles per metre. A
   material with no textures gets a flat grey albedo and a flat normal. The shader's `normal_strength`
   uniform scales the normal map if it reads too strong at a given tiling. Ids run to 32; a voxel carrying a
   higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
@@ -100,7 +107,7 @@ var hit := world.raycast(from, dir, 14.0)  # {position, normal, material}; march
 and builds the solid it encloses: load a `.glb` and stamp it in, no offline step. Shells must be closed
 and consistently wound; overlapping ones (a canopy of leaf clusters) union. Parts thinner than about a
 cell vanish, so scale small props up. The demo plants the anime-tree-rendering trees this way
-(`plant_trees` in `demo/world.gd`, one call per mesh, wood before leaves); five trees take about 0.4 s.
+(`VoxelUtil.plant_tree` in `demo/voxel_util.gd`, one call per mesh, wood before leaves); five trees take about 0.4 s.
 
 ### Reacting to the world
 

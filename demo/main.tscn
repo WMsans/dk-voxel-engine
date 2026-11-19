@@ -1,7 +1,8 @@
 [gd_scene format=3 uid="uid://dtf4r61y1sm6k"]
 
 [ext_resource type="Script" uid="uid://ce16ebuvigfyl" path="res://demo/main.gd" id="1_main"]
-[ext_resource type="Script" uid="uid://dp875x46jg5ke" path="res://demo/world.gd" id="2_world"]
+[ext_resource type="Script" path="res://demo/voxel_debris.gd" id="2_debris"]
+[ext_resource type="Script" path="res://demo/voxel_tools.gd" id="11_tools"]
 [ext_resource type="Script" uid="uid://d35teojhu51ei" path="res://demo/player.gd" id="3_player"]
 [ext_resource type="Script" uid="uid://nc5uhbtmsxbw" path="res://demo/hud.gd" id="4_hud"]
 [ext_resource type="VoxelMaterialSet" uid="uid://d1tvfsxrck1cn" path="res://demo/materials.tres" id="5_mats"]
@@ -94,9 +95,11 @@ directional_shadow_max_distance = 160.0
 [node name="World" type="VoxelWorld" parent="." unique_id=1571118196]
 material = SubResource("ShaderMaterial_terrain")
 material_set = ExtResource("5_mats")
-script = ExtResource("2_world")
+
+[node name="Debris" type="Node3D" parent="."]
+script = ExtResource("2_debris")
 shards = Array[Mesh]([ExtResource("s0"), ExtResource("s1"), ExtResource("s2"), ExtResource("s3"), ExtResource("s4"), ExtResource("s5"), ExtResource("s6"), ExtResource("s7"), ExtResource("s8"), ExtResource("s9")])
-bomb_scene = ExtResource("7_bomb")
+material_set = ExtResource("5_mats")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1897108621]
 floor_max_angle = 0.872665
@@ -120,8 +123,15 @@ omni_range = 14.0
 [node name="Viewer" type="VoxelViewer" parent="Player" unique_id=1579860662]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 
-[node name="HUD" type="CanvasLayer" parent="." unique_id=1328889621]
+[node name="Tools" type="Node" parent="Player" node_paths=PackedStringArray("world", "camera")]
+script = ExtResource("11_tools")
+world = NodePath("../../World")
+camera = NodePath("../Camera3D")
+bomb_scene = ExtResource("7_bomb")
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1328889621 node_paths=PackedStringArray("world")]
 script = ExtResource("4_hud")
+world = NodePath("../World")
 
 [node name="Status" type="Label" parent="HUD" unique_id=941977135]
 offset_left = 12.0
