@@ -15,6 +15,7 @@
 //     i8 sd[n.x * n.y * n.z]  x fastest, then y, then z; signed distance in cell / SD_SCALE units,
 //                    negative inside, clamped to +-127 (so about +-8 cells: enough for the +-1 cell band)
 #pragma once
+#include "core/sdf_grid.h"
 #include "core/voxel_generator.h"
 
 #include <string>
@@ -24,14 +25,10 @@ namespace dkv {
 
 struct LevelTerrain : Generator {
 	enum Mode : uint8_t { PASTE, ERASE, PAINT };
-	static constexpr float SD_SCALE = 16.0f;
+	static constexpr float SD_SCALE = SdfGrid::SD_SCALE;
 
-	struct Part {
+	struct Part : SdfGrid {
 		uint8_t mode = PASTE, material = 0;
-		float origin[3] = {0, 0, 0}, cell = 1.0f;
-		int n[3] = {0, 0, 0};
-		std::vector<int8_t> sd;
-		float sample(float x, float y, float z) const; // metres; outside the grid = as far as the grid stores
 	};
 
 	float size[3] = {0, 0, 0}, spawn[3] = {0, 0, 0};

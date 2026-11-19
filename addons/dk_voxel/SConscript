@@ -33,6 +33,7 @@ obj = here.Dir("build/obj")
 env.VariantDir(obj, src, duplicate=0)
 sources = [obj.File(name) for name in (
 	"core/register_types.cpp",
+	"core/sdf_grid.cpp",
 	"core/voxel_chunks.cpp",
 	"core/voxel_far.cpp",
 	"core/voxel_materials.cpp",

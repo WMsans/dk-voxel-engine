@@ -5,6 +5,14 @@ extends VoxelWorld
 
 const GROUND_FROM := 400.0 # raycast down from here to find the ground: endless worlds have no height
 const LEVEL_PATH := "res://demo/levels/mini_level.dkvl"
+const BARK := 17
+const LEAVES := 18
+## The trees of the anime-tree-rendering project (made in its blender/*.blend), voxelized when planted.
+const TREES: Array[PackedScene] = [
+	preload("res://demo/trees/tree_a.glb"), preload("res://demo/trees/tree_b.glb"), preload("res://demo/trees/tree_c.glb"),
+	preload("res://demo/trees/pine_a.glb"), preload("res://demo/trees/pine_b.glb"),
+]
+const TREE_SCALE := 1.6 # at 0.5 m cells the thinnest branches need it to survive voxelizing
 
 @export var shards: Array[Mesh] = []
 @export var bomb_scene: PackedScene
@@ -20,6 +28,7 @@ var shard_shapes: Array[Shape3D] = []
 
 func _ready() -> void:
 	level.level_path = LEVEL_PATH
+	(material as ShaderMaterial).set_shader_parameter(&"leaf_material", LEAVES) # cel shader's scallop marker
 	for m in shards:
 		shard_shapes.append(m.create_convex_shape())
 
@@ -85,6 +94,34 @@ func build_ruins(at: Vector3) -> void:
 	for i in 8: # stairs up to the tower
 		build_box(base.translated_local(Vector3(0, -4.2 + i * 0.5, 13.0 - i * 1.0)), Vector3(1.6, 0.25, 0.5), 3)
 	expose_inner_material = true
+
+
+## A grove around `at`, one of each tree.
+func plant_trees(at: Vector3, count := 5) -> void:
+	for i in count:
+		var a := TAU * i / count
+		plant_tree(TREES[i % TREES.size()], at + Vector3(cos(a), 0, sin(a)) * 11.0, a * 2.3)
+
+
+## One tree on the ground below `at`: every mesh of the glb becomes a build_mesh edit, wood first so the
+## leaves only fill the air around the branches.
+func plant_tree(scene: PackedScene, at: Vector3, angle := 0.0) -> void:
+	var xf := Transform3D(Basis(Vector3.UP, angle).scaled(Vector3.ONE * TREE_SCALE), ground(at) + Vector3.DOWN * 0.5)
+	var tree := scene.instantiate()
+	var parts := tree.find_children("*", "MeshInstance3D", true, false)
+	parts.sort_custom(func(m, n) -> bool: return not _is_leaf(m) and _is_leaf(n))
+	for mi: MeshInstance3D in parts:
+		var local := Transform3D()
+		var n: Node = mi
+		while n != tree:
+			local = (n as Node3D).transform * local
+			n = n.get_parent()
+		build_mesh(mi.mesh, xf * local, LEAVES if _is_leaf(mi) else BARK)
+	tree.free()
+
+
+func _is_leaf(mi: MeshInstance3D) -> bool:
+	return mi.mesh.surface_get_material(0).resource_name.begins_with("Leaf")
 
 
 ## Turns an edit result into feedback: gold tally and tumbling fragments of whatever was removed.

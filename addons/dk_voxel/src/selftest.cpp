@@ -347,6 +347,38 @@ int main() {
 		CHECK(v.get(2, 2, 2).d == 0, "outside every part is air");
 	}
 
+	printf("mesh voxelizer\n");
+	{ // two overlapping 6 m cubes (plain parity would hollow the overlap), and a third wound inside out
+		std::vector<Vec3> tris;
+		auto cube = [&](Vec3 lo, float s, bool flip) {
+			for (int a = 0; a < 3; a++)
+				for (int side = 0; side < 2; side++) {
+					const int u = (a + 1) % 3, w = (a + 2) % 3;
+					Vec3 q[4];
+					for (int k = 0; k < 4; k++) {
+						q[k] = lo;
+						q[k][a] += side * s;
+						q[k][u] += (k == 1 || k == 2) * s;
+						q[k][w] += (k >= 2) * s;
+					}
+					const bool f = flip != (side == 1);
+					for (int t : {0, 1, 2, 0, 2, 3}) tris.push_back(q[f ? 3 - t : t]);
+				}
+		};
+		cube({10.2f, 10.1f, 10.3f}, 6, false);
+		cube({13.2f, 13.1f, 13.3f}, 6, false);
+		cube({22.2f, 10.1f, 22.3f}, 6, true);
+		SdfGrid g = voxelize_triangles(tris, 0.5f);
+		CHECK(g.sample({14.5f, 14.5f, 14.5f}) < -0.9f && g.sample({11, 11, 11}) < -0.3f && g.sample({18, 11, 11}) > 0.9f && g.sample({25, 13, 25}) < -0.9f, "inside/outside");
+		CHECK(std::fabs(g.sample({10.2f, 12, 12})) < 0.05f, "face distance %.3f", g.sample({10.2f, 12, 12}));
+		Volume v(4, 4, 4, 0.5f);
+		const float h[3] = {g.n[0] * 0.25f, g.n[1] * 0.25f, g.n[2] * 0.25f};
+		v.edit(MESH, BUILD, {g.origin[0] + h[0], g.origin[1] + h[1], g.origin[2] + h[2]}, {h[0], h[1], h[2]}, ID, 3, 0, 1, false, &g);
+		Soup a = mesh_all(v, lod0);
+		printf("  cubes: %ld tris, volume %.1f (exact 621.0)\n", a.tris, a.volume);
+		CHECK(a.open_edges == 0 && std::fabs(a.volume - 621) < 621 * 0.03, "open %ld volume %.1f", a.open_edges, a.volume);
+	}
+
 	printf("skirts\n");
 	{ // a closed surface inside one chunk gets none; a sphere cut by chunk borders gets a strip on each cut edge
 		Volume v(2, 2, 2, 0.5f);

@@ -64,7 +64,10 @@ Properties:
 - `expose_inner_material` — on by default; turn it off around digs that author shapes (doors, windows) rather
   than destroy them, so they stay clean.
 - `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
-- `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
+- `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms. For a
+  variant (other render modes, extra outputs), include `voxel_terrain.gdshaderinc` after your own
+  `shader_type`/`render_mode` and optionally `#define VOXEL_FRAGMENT_HOOK` statements to run at the end of
+  `fragment()`; `demo/cel/voxel_terrain_cel.gdshader` is the demo's cel-shaded one.
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
   (0 = cores − 2) and LOD/collision tuning.
 - `far_levels` — endless worlds only: coarse far-field levels beyond the viewers' `view_distance`, default 6
@@ -92,6 +95,12 @@ world.build_box(xf, half_extents, 7)       # sharp = true: exact edges and corne
 world.dig_cylinder(xf, radius, half_height, 9)
 var hit := world.raycast(from, dir, 14.0)  # {position, normal, material}; marches the voxels
 ```
+
+`build_mesh(mesh, transform, material)` voxelizes any `Mesh` at the world's cell size when it is called
+and builds the solid it encloses: load a `.glb` and stamp it in, no offline step. Shells must be closed
+and consistently wound; overlapping ones (a canopy of leaf clusters) union. Parts thinner than about a
+cell vanish, so scale small props up. The demo plants the anime-tree-rendering trees this way
+(`plant_trees` in `demo/world.gd`, one call per mesh, wood before leaves); five trees take about 0.4 s.
 
 ### Reacting to the world
 

@@ -14,7 +14,9 @@ extends Node3D
 @onready var player: CharacterBody3D = $Player
 @onready var hud: CanvasLayer = $HUD
 
-var profile := "terrain"
+const LEVEL_TREE := Vector3(-7.0, 0, -6.0) # from the level's spawn
+
+var profile := "level"
 var spawn_token := 0
 var shot_path := ""
 
@@ -56,6 +58,9 @@ func _spawn(token: int) -> void:
 	player.velocity = Vector3.ZERO
 	if profile == "procedural":
 		world.build_ruins(at + Vector3(14.0, 0, -6.0))
+		world.plant_trees(at + Vector3(-14.0, 0, 10.0))
+	elif profile == "level":
+		world.plant_tree(world.TREES[0], at + LEVEL_TREE)
 	await world.wait_ready(AABB(player.position + Vector3(-8, -2, -8), Vector3(16, 12, 16)), true) # under the player
 	if token != spawn_token:
 		return
@@ -82,7 +87,8 @@ func _beauty_shot() -> void:
 	player.fly = true
 	if profile == "level":
 		var c: Vector3 = world.level.get_level_size() * 0.5
-		await _shoot([[c + Vector3(-45, 35, 55), c], [world.level.get_spawn_point() + Vector3(0, 4, 6), c + Vector3(0, 2, 0)]])
+		await _shoot([[c + Vector3(-45, 35, 55), c], [world.level.get_spawn_point() + Vector3(0, 4, 6), c + Vector3(0, 2, 0)],
+				[world.level.get_spawn_point() + LEVEL_TREE + Vector3(6, 6, 22), world.level.get_spawn_point() + LEVEL_TREE + Vector3(0, 7, 0)]])
 		return
 	var tower: Vector3 = world.ground(Vector3(14.0, 0, -6.0))
 	world.dig_sphere(tower + Vector3(-9, 0.5, 6), 3.2, 2)
@@ -93,6 +99,7 @@ func _beauty_shot() -> void:
 		world.dig_sphere(crater + Vector3(i * 2.5, -1.0 - i * 2.2, 0), 5.0, 2)
 	await _shoot([
 		[tower + Vector3(-20, 14, 30), tower + Vector3(-6, 3, 2)],
+		[world.ground(Vector3(-14.0, 0, 10.0)) + Vector3(26, 12, 22), world.ground(Vector3(-14.0, 0, 10.0)) + Vector3(0, 8, 0)],
 		[Vector3(-70.0, 60.0, 85.0), Vector3(0, 20, 0)],
 		[crater + Vector3(-9, 5, 7), crater + Vector3(4, -5, 0)],
 	])

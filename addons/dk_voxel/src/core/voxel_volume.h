@@ -1,5 +1,6 @@
 // Chunk storage, edits, queries and per-chunk serialisation. Godot-free (see selftest.cpp).
 #pragma once
+#include "sdf_grid.h"
 #include "voxel_generator.h"
 
 #include <memory>
@@ -49,7 +50,8 @@ public:
 
 	// center/half in world units; basis = 3x3 rotation, shape-local axes in columns. half.x = radius for
 	// SPHERE and CYLINDER (half.y = cylinder half height). strength scales SMOOTH. sharp writes Hermite data.
-	EditResult edit(Shape s, Mode m, Vec3 center, Vec3 half, const float basis[9], uint8_t material, int power, float strength, bool sharp);
+	// MESH reads `grid` in volume coordinates and ignores the basis; center/half = the grid's box.
+	EditResult edit(Shape s, Mode m, Vec3 center, Vec3 half, const float basis[9], uint8_t material, int power, float strength, bool sharp, const SdfGrid *grid = nullptr);
 
 	// Thread-safe against edit(). Returns false (and leaves out empty) when the chunk has no surface.
 	bool mesh_chunk(int x, int y, int z, int lod, MeshData &out) const;

@@ -265,7 +265,7 @@ func _initialize() -> void:
 	over.free()
 
 	# The shader's own MATERIAL_SLOTS literal must agree with what the C++ packs.
-	var shader_text := FileAccess.get_file_as_string("res://addons/dk_voxel/voxel_terrain.gdshader")
+	var shader_text := FileAccess.get_file_as_string("res://addons/dk_voxel/voxel_terrain.gdshaderinc")
 	var slots_re := RegEx.create_from_string("MATERIAL_SLOTS\\s*=\\s*(\\d+)")
 	var found := slots_re.search(shader_text)
 	check(found != null and packed != null and found.get_string(1).to_int() == packed.get_layers(),

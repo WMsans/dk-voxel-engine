@@ -52,7 +52,6 @@
 [ext_resource type="Texture2D" uid="uid://c3qu0fxvumgls" path="res://demo/textures/cracked_crystal/cracked_crystal_ao.png" id="50_xhvvv"]
 [ext_resource type="Texture2D" uid="uid://cs52m3tfbrp2u" path="res://demo/textures/cracked_crystal/cracked_crystal_normal.png" id="51_wyxbs"]
 [ext_resource type="Texture2D" uid="uid://bfl6ns5suvipl" path="res://demo/textures/cracked_crystal/cracked_crystal_roughness.png" id="52_vldqi"]
-
 [ext_resource type="Texture2D" uid="uid://1ias7b6qx2lf" path="res://demo/textures/slop_check_rock/slop_check_rock_albedo.png" id="53_slopckr_al"]
 [ext_resource type="Texture2D" uid="uid://dtv50g7tfkm17" path="res://demo/textures/slop_check_rock/slop_check_rock_normal.png" id="54_slopckr_nm"]
 [ext_resource type="Texture2D" uid="uid://cal5ni2jifofs" path="res://demo/textures/slop_check_rock/slop_check_rock_roughness.png" id="55_slopckr_rg"]
@@ -233,12 +232,11 @@ albedo = ExtResource("49_usbnt")
 normal = ExtResource("51_wyxbs")
 roughness_map = ExtResource("52_vldqi")
 ao_map = ExtResource("50_xhvvv")
+
 [sub_resource type="VoxelMaterialDef" id="VoxelMaterialDef_slopckr"]
 name = "Slop check rock"
 color_a = Color(1, 1, 1, 1)
 color_b = Color(1, 1, 1, 1)
-pattern_scale = 0.3
-roughness = 0.9
 hardness = 1
 albedo = ExtResource("53_slopckr_al")
 normal = ExtResource("54_slopckr_nm")
@@ -249,8 +247,6 @@ ao_map = ExtResource("56_slopckr_ao")
 name = "Slop cracked rock"
 color_a = Color(1, 1, 1, 1)
 color_b = Color(1, 1, 1, 1)
-pattern_scale = 0.3
-roughness = 0.9
 hardness = 1
 albedo = ExtResource("57_slopcrk_al")
 normal = ExtResource("58_slopcrk_nm")
@@ -269,5 +265,28 @@ normal = ExtResource("62_slopgrs_nm")
 roughness_map = ExtResource("63_slopgrs_rg")
 ao_map = ExtResource("64_slopgrs_ao")
 
+[sub_resource type="Gradient" id="Gradient_white"]
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_white"]
+gradient = SubResource("Gradient_white")
+width = 4
+height = 4
+
+[sub_resource type="VoxelMaterialDef" id="VoxelMaterialDef_bark"]
+name = "Bark"
+color_a = Color(0.5838, 0.3811, 0.2348, 1)
+color_b = Color(0.5838, 0.3811, 0.2348, 1)
+roughness = 1.0
+inner_material = 12
+albedo = SubResource("GradientTexture2D_white")
+
+[sub_resource type="VoxelMaterialDef" id="VoxelMaterialDef_leaves"]
+name = "Leaves"
+color_a = Color(0.41, 0.65, 0.2934, 1)
+color_b = Color(0.41, 0.65, 0.2934, 1)
+roughness = 1.0
+albedo = SubResource("GradientTexture2D_white")
+
 [resource]
-materials = Array[VoxelMaterialDef]([SubResource("VoxelMaterialDef_y75bd"), SubResource("VoxelMaterialDef_rmhbd"), SubResource("VoxelMaterialDef_pwduh"), SubResource("VoxelMaterialDef_ad1sy"), SubResource("VoxelMaterialDef_862dx"), SubResource("VoxelMaterialDef_ef1jq"), SubResource("VoxelMaterialDef_88735"), SubResource("VoxelMaterialDef_osbb7"), SubResource("VoxelMaterialDef_7a2se"), SubResource("VoxelMaterialDef_wue3q"), SubResource("VoxelMaterialDef_8vsxf"), SubResource("VoxelMaterialDef_s1g8y"), SubResource("VoxelMaterialDef_2ua1j"), SubResource("VoxelMaterialDef_tdd1w"), SubResource("VoxelMaterialDef_slopckr"), SubResource("VoxelMaterialDef_slopcrk"), SubResource("VoxelMaterialDef_slopgrs")])
+materials = Array[VoxelMaterialDef]([SubResource("VoxelMaterialDef_y75bd"), SubResource("VoxelMaterialDef_rmhbd"), SubResource("VoxelMaterialDef_pwduh"), SubResource("VoxelMaterialDef_ad1sy"), SubResource("VoxelMaterialDef_862dx"), SubResource("VoxelMaterialDef_ef1jq"), SubResource("VoxelMaterialDef_88735"), SubResource("VoxelMaterialDef_osbb7"), SubResource("VoxelMaterialDef_7a2se"), SubResource("VoxelMaterialDef_wue3q"), SubResource("VoxelMaterialDef_8vsxf"), SubResource("VoxelMaterialDef_s1g8y"), SubResource("VoxelMaterialDef_2ua1j"), SubResource("VoxelMaterialDef_tdd1w"), SubResource("VoxelMaterialDef_slopckr"), SubResource("VoxelMaterialDef_slopcrk"), SubResource("VoxelMaterialDef_slopgrs"), SubResource("VoxelMaterialDef_bark"), SubResource("VoxelMaterialDef_leaves")])

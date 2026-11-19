@@ -100,7 +100,7 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	dkv::chunk_changed(*st, 0, c.key, &c);
 }
 
-Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp) {
+Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp, const dkv::SdfGrid *grid) {
 	ensure_volume();
 	Dictionary out, removed;
 	float total = 0;
@@ -110,7 +110,7 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 		Transform3D l = gx().affine_inverse() * xf;
 		Basis b = l.basis.orthonormalized();
 		const float B[9] = {(float)b[0][0], (float)b[0][1], (float)b[0][2], (float)b[1][0], (float)b[1][1], (float)b[1][2], (float)b[2][0], (float)b[2][1], (float)b[2][2]};
-		dkv::EditResult r = st->vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp);
+		dkv::EditResult r = st->vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp, grid);
 		for (int z = r.cmin[2]; z <= r.cmax[2]; z++)
 			for (int y = r.cmin[1]; y <= r.cmax[1]; y++)
 				for (int x = r.cmin[0]; x <= r.cmax[0]; x++)
@@ -125,7 +125,7 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 			memcpy(L.vol->hardness, st->vol->hardness, sizeof L.vol->hardness);
 			memcpy(L.vol->inner, st->vol->inner, sizeof L.vol->inner);
 			L.vol->expose_inner = st->vol->expose_inner;
-			dkv::EditResult fr = L.vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp);
+			dkv::EditResult fr = L.vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp, grid);
 			for (int z = fr.cmin[2]; z <= fr.cmax[2]; z++)
 				for (int y = fr.cmin[1]; y <= fr.cmax[1]; y++)
 					for (int x = fr.cmin[0]; x <= fr.cmax[0]; x++) {
@@ -171,6 +171,7 @@ void VoxelWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("dig_box", "transform", "half_extents", "power", "sharp"), &VoxelWorld::dig_box, DEFVAL(0), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("build_cylinder", "transform", "radius", "half_height", "material", "sharp"), &VoxelWorld::build_cylinder, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("dig_cylinder", "transform", "radius", "half_height", "power", "sharp"), &VoxelWorld::dig_cylinder, DEFVAL(0), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("build_mesh", "mesh", "transform", "material"), &VoxelWorld::build_mesh);
 	ClassDB::bind_method(D_METHOD("raycast", "origin", "direction", "max_distance"), &VoxelWorld::raycast);
 	ClassDB::bind_method(D_METHOD("get_density", "position"), &VoxelWorld::get_density);
 	ClassDB::bind_method(D_METHOD("is_area_ready", "aabb", "need_collision"), &VoxelWorld::is_area_ready, DEFVAL(true));
@@ -299,6 +300,24 @@ Dictionary VoxelWorld::build_box(const Transform3D &xf, Vector3 half, int mat, b
 Dictionary VoxelWorld::dig_box(const Transform3D &xf, Vector3 half, int power, bool sharp) { return do_edit(dkv::BOX, dkv::ERASE, xf, half, 0, power, 1, sharp); }
 Dictionary VoxelWorld::build_cylinder(const Transform3D &xf, float r, float hh, int mat, bool sharp) { return do_edit(dkv::CYLINDER, dkv::BUILD, xf, Vector3(r, hh, r), mat, 0, 1, sharp); }
 Dictionary VoxelWorld::dig_cylinder(const Transform3D &xf, float r, float hh, int power, bool sharp) { return do_edit(dkv::CYLINDER, dkv::ERASE, xf, Vector3(r, hh, r), 0, power, 1, sharp); }
+
+Dictionary VoxelWorld::build_mesh(const Ref<Mesh> &mesh, const Transform3D &xf, int mat) {
+	ensure_volume();
+	ERR_FAIL_COND_V(mesh.is_null() || !st->vol, Dictionary());
+	const Transform3D l = gx().affine_inverse() * xf; // into volume space, where the grid lines up with the voxels
+	const PackedVector3Array faces = mesh->get_faces();
+	std::vector<dkv::Vec3> tris;
+	tris.reserve(faces.size());
+	for (const Vector3 &p : faces) {
+		const Vector3 q = l.xform(p);
+		tris.push_back({(float)q.x, (float)q.y, (float)q.z});
+	}
+	const dkv::SdfGrid g = dkv::voxelize_triangles(tris, st->vol->cell);
+	if (g.sd.empty()) return Dictionary();
+	const Vector3 half = Vector3(g.n[0] - 1, g.n[1] - 1, g.n[2] - 1) * (g.cell * 0.5f);
+	const Vector3 center = Vector3(g.origin[0], g.origin[1], g.origin[2]) + half;
+	return do_edit(dkv::MESH, dkv::BUILD, gx() * Transform3D(Basis(), center), half, mat, 0, 1, false, &g);
+}
 
 // Marches the voxel field itself, so it works before (and beyond where) collision exists.
 Dictionary VoxelWorld::raycast(Vector3 origin, Vector3 dir, float max_dist) {

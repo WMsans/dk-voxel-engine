@@ -6,6 +6,7 @@
 #include "voxel_world_state.h"
 
 #include <godot_cpp/classes/material.hpp>
+#include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/ref.hpp>
 
@@ -36,7 +37,7 @@ class VoxelWorld : public Node3D {
 	// Re-packs the textures and re-applies hardness when the material set or any def in it changes.
 	void _materials_changed();
 
-	Dictionary do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp);
+	Dictionary do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp, const dkv::SdfGrid *grid = nullptr);
 
 protected:
 	static void _bind_methods();
@@ -64,6 +65,9 @@ public:
 	Dictionary dig_box(const Transform3D &xf, Vector3 half, int power, bool sharp);
 	Dictionary build_cylinder(const Transform3D &xf, float r, float hh, int mat, bool sharp);
 	Dictionary dig_cylinder(const Transform3D &xf, float r, float hh, int power, bool sharp);
+	// Voxelizes the mesh's triangles (placed by `xf`, scale included) and builds the solid they enclose.
+	// Closed, consistently wound shells; overlapping ones union. Parts thinner than about a cell vanish.
+	Dictionary build_mesh(const Ref<Mesh> &mesh, const Transform3D &xf, int mat);
 
 	// Marches the voxel field itself, so it works before (and beyond where) collision exists.
 	Dictionary raycast(Vector3 origin, Vector3 dir, float max_dist);

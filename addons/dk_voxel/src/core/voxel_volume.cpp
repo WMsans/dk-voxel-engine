@@ -258,9 +258,11 @@ Voxel Volume::get_unlocked(int x, int y, int z) const {
 // Editing
 // ---------------------------------------------------------------------------------------------
 
-EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B[9], uint8_t material, int power, float strength, bool sharp) {
+EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B[9], uint8_t material, int power, float strength, bool sharp, const SdfGrid *grid) {
 	EditResult res;
+	if (shape == MESH && !grid) return res;
 	auto sdf = [&](Vec3 w) -> float { // world units, < 0 inside
+		if (shape == MESH) return grid->sample(w);
 		Vec3 d = w - c;
 		Vec3 p(d.x * B[0] + d.y * B[3] + d.z * B[6], d.x * B[1] + d.y * B[4] + d.z * B[7], d.x * B[2] + d.y * B[5] + d.z * B[8]);
 		if (shape == SPHERE) return p.len() - half.x;
@@ -274,8 +276,9 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 	float R = shape == SPHERE ? half.x : shape == CYLINDER ? std::sqrt(half.x * half.x + half.y * half.y) : half.len();
 	int lo[3], hi[3];
 	for (int i = 0; i < 3; i++) {
-		lo[i] = (int)std::floor((c[i] - R) / cell) - 2;
-		hi[i] = (int)std::ceil((c[i] + R) / cell) + 2;
+		const float r = shape == MESH ? half[i] : R; // the grid is axis-aligned
+		lo[i] = (int)std::floor((c[i] - r) / cell) - 2;
+		hi[i] = (int)std::ceil((c[i] + r) / cell) + 2;
 		if (bounded) { // a bounded world is closed: never write into the air outside it
 			lo[i] = std::max(lo[i], bmin[i] * CHUNK + 1);
 			hi[i] = std::min(hi[i], bmax[i] * CHUNK - 2);

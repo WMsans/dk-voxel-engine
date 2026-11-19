@@ -82,7 +82,7 @@ struct MeshData {
 // neighbour meshed at another resolution meets a strip instead of a crack. voxel_mesher.cpp.
 void add_skirts(MeshData &m, float depth);
 
-enum Shape { SPHERE, BOX, CYLINDER };
+enum Shape { SPHERE, BOX, CYLINDER, MESH }; // MESH samples an SdfGrid (sdf_grid.h)
 enum Mode { ERASE, BUILD, SMOOTH };
 
 struct EditResult {
