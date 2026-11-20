@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://kt8jv8onap2i"
-path="res://.godot/imported/rock_normal.png-4b4115bcf1ec0ec653b28f43513c6b63.ctex"
+uid="uid://cq0nx6q8rp2p5"
+path="res://.godot/imported/dug_soil_ao.png-fe98ec20acf5168b2688ab771022a279.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://demo/textures/rock_normal.png"
-dest_files=["res://.godot/imported/rock_normal.png-4b4115bcf1ec0ec653b28f43513c6b63.ctex"]
+source_file="res://demo/textures/dug_soil/dug_soil_ao.png"
+dest_files=["res://.godot/imported/dug_soil_ao.png-fe98ec20acf5168b2688ab771022a279.ctex"]
 
 [params]
 

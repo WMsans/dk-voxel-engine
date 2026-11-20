@@ -15,10 +15,13 @@ struct Volume::Chunk {
 	bool modified = false; // edited since it was generated or loaded
 };
 
-Volume::Volume(float cell_size) : cell(cell_size), bounded(false), bmin{0, 0, 0}, bmax{0, 0, 0} {}
+Volume::Volume(float cell_size) : cell(cell_size), bounded(false), bmin{0, 0, 0}, bmax{0, 0, 0} {
+	for (int i = 0; i < 256; i++) inner[i] = (uint8_t)i;
+}
 
 Volume::Volume(int chunks_x, int chunks_y, int chunks_z, float cell_size) :
 		cell(cell_size), bounded(true), bmin{0, 0, 0}, bmax{chunks_x, chunks_y, chunks_z} {
+	for (int i = 0; i < 256; i++) inner[i] = (uint8_t)i;
 	for (int z = 0; z < chunks_z; z++)
 		for (int y = 0; y < chunks_y; y++)
 			for (int x = 0; x < chunks_x; x++) chunks.emplace(ChunkKey(x, y, z), std::make_unique<Chunk>());
@@ -145,9 +148,10 @@ bool Volume::deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size
 	return true;
 }
 
-void Volume::remove_chunk(int cx, int cy, int cz) {
+void Volume::remove_chunks(const std::vector<ChunkKey> &keys) {
+	if (keys.empty()) return;
 	std::unique_lock lk(mtx);
-	chunks.erase(ChunkKey(cx, cy, cz));
+	for (const ChunkKey &k : keys) chunks.erase(k);
 }
 
 bool Volume::is_modified(int cx, int cy, int cz) const {
@@ -254,9 +258,11 @@ Voxel Volume::get_unlocked(int x, int y, int z) const {
 // Editing
 // ---------------------------------------------------------------------------------------------
 
-EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B[9], uint8_t material, int power, float strength, bool sharp) {
+EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B[9], uint8_t material, int power, float strength, bool sharp, const SdfGrid *grid) {
 	EditResult res;
+	if (shape == MESH && !grid) return res;
 	auto sdf = [&](Vec3 w) -> float { // world units, < 0 inside
+		if (shape == MESH) return grid->sample(w);
 		Vec3 d = w - c;
 		Vec3 p(d.x * B[0] + d.y * B[3] + d.z * B[6], d.x * B[1] + d.y * B[4] + d.z * B[7], d.x * B[2] + d.y * B[5] + d.z * B[8]);
 		if (shape == SPHERE) return p.len() - half.x;
@@ -270,8 +276,9 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 	float R = shape == SPHERE ? half.x : shape == CYLINDER ? std::sqrt(half.x * half.x + half.y * half.y) : half.len();
 	int lo[3], hi[3];
 	for (int i = 0; i < 3; i++) {
-		lo[i] = (int)std::floor((c[i] - R) / cell) - 2;
-		hi[i] = (int)std::ceil((c[i] + R) / cell) + 2;
+		const float r = shape == MESH ? half[i] : R; // the grid is axis-aligned
+		lo[i] = (int)std::floor((c[i] - r) / cell) - 2;
+		hi[i] = (int)std::ceil((c[i] + r) / cell) + 2;
 		if (bounded) { // a bounded world is closed: never write into the air outside it
 			lo[i] = std::max(lo[i], bmin[i] * CHUNK + 1);
 			hi[i] = std::min(hi[i], bmax[i] * CHUNK - 2);
@@ -290,12 +297,16 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 			for (int y = lo[1]; y <= hi[1]; y++)
 				for (int x = lo[0]; x <= hi[0]; x++) old[ri(x, y, z)] = get_unlocked(x, y, z).d;
 	}
+	// An erase repaints solid voxels up to 2 cells out, not just the 1-cell density band: a surface cell's far
+	// corners sit up to sqrt(3) cells from the cut, and an unpainted corner bleeds the outer material onto it.
+	const float reach = mode == ERASE && expose_inner ? 2.0f : 1.0f;
+	std::vector<std::array<int, 3>> paint;
 	auto old_d = [&](int x, int y, int z) -> float { return in_region(x, y, z) ? old[ri(x, y, z)] : get_unlocked(x, y, z).d; };
 	for (int z = lo[2]; z <= hi[2]; z++)
 		for (int y = lo[1]; y <= hi[1]; y++)
 			for (int x = lo[0]; x <= hi[0]; x++) {
 				float sd = sdf(Vec3(x * cell, y * cell, z * cell)) / cell;
-				if (sd > 1.0f) continue;
+				if (sd > reach) continue;
 				Voxel v = get_unlocked(x, y, z), nv = v;
 				uint8_t sh = sdf_to_density(sd);
 				if (mode == BUILD) {
@@ -303,7 +314,13 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 				} else if (hardness[v.m] > power) {
 					continue;
 				} else if (mode == ERASE) {
-					if (255 - sh < v.d) nv.d = 255 - sh;
+					if (255 - sh < v.d) {
+						nv.d = 255 - sh;
+						if (expose_inner) nv.m = inner[v.m];
+					} else if (expose_inner && v.d > 0 && inner[v.m] != v.m) {
+						paint.push_back({x, y, z}); // solid near the cut: repainted below if the dig removed anything
+						continue;
+					}
 				} else if (sd < 0) {
 					float avg = (old_d(x, y, z) + old_d(x - 1, y, z) + old_d(x + 1, y, z) + old_d(x, y - 1, z) + old_d(x, y + 1, z) + old_d(x, y, z - 1) + old_d(x, y, z + 1)) / 7.0f;
 					nv.d = to_u8(v.d + (avg - v.d) * std::clamp(strength * std::min(-sd * 0.5f, 1.0f), 0.0f, 1.0f));
@@ -317,6 +334,8 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 				res.changed = true;
 			}
 	if (!res.changed) return res;
+	for (const auto &p : paint) // no chg mark: density is unchanged, so its Hermite edges stay valid
+		if (Voxel *dst = writable(p[0], p[1], p[2])) dst->m = inner[dst->m];
 
 	// Hermite data. Sharp edits store the exact crossing and analytic normal of every edge the shape now
 	// defines; everything else that was touched is erased so it falls back to the density field.

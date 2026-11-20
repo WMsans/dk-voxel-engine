@@ -129,6 +129,12 @@ func _initialize() -> void:
 	single.materials = only
 	w2.material_set = single
 	check(not w2.dig_sphere(Vector3(2, 2, 2), 1.0, 0).changed, "unlisted material id inherits entry 0 hardness")
+	# inner_material: a dig repaints the surface it exposes. Editing the def in place re-applies the table.
+	d0.hardness = 0
+	d0.inner_material = 2
+	w2.dig_sphere(Vector3(2, 3.5, 2), 1.1, 0)
+	var floor_hit := w2.raycast(Vector3(2, 6, 2), Vector3.DOWN, 10.0)
+	check(floor_hit.get("material", -1) == 2, "dig exposes the inner material (%s)" % floor_hit)
 	w2.free()
 
 	# The material set must reach the shader: 32 slots of colour and pattern parameters, entry 0 carrying
@@ -146,11 +152,18 @@ func _initialize() -> void:
 	var mw := VoxelWorld.new()
 	mw.material = sm
 	mw.material_set = shader_set
-	var color_a: PackedColorArray = sm.get_shader_parameter("color_a")
-	var color_b: PackedColorArray = sm.get_shader_parameter("color_b")
-	var params: Array = sm.get_shader_parameter("params")
-	check(color_a.size() == 32 and color_b.size() == 32 and params.size() == 32,
-			"material uniforms fill 32 slots (color_a %d, color_b %d, params %d)" % [color_a.size(), color_b.size(), params.size()])
+	# The world pushes these straight to the RenderingServer (never as ShaderMaterial properties), so read them
+	# there. The headless dummy renderer stores no material params: the check needs a real renderer.
+	var color_a: PackedColorArray = []
+	var params: Array = []
+	if DisplayServer.get_name() == "headless":
+		print("  skip  material uniforms (headless renderer stores no params; run without --headless)")
+	else:
+		color_a = RenderingServer.material_get_param(sm.get_rid(), "color_a")
+		var color_b: PackedColorArray = RenderingServer.material_get_param(sm.get_rid(), "color_b")
+		params = RenderingServer.material_get_param(sm.get_rid(), "params")
+		check(color_a.size() == 32 and color_b.size() == 32 and params.size() == 32,
+				"material uniforms fill 32 slots (color_a %d, color_b %d, params %d)" % [color_a.size(), color_b.size(), params.size()])
 	if color_a.size() == 32 and params.size() == 32:
 		var p0: Vector4 = params[0]
 		check(color_a[0].is_equal_approx(Color(0.25, 0.5, 0.75)) and is_equal_approx(p0.x, 0.3) and is_equal_approx(p0.y, 0.42),
@@ -171,8 +184,12 @@ func _initialize() -> void:
 	tex_set.materials = tex_defs
 	tex_world.material = shader_mat
 	tex_world.material_set = tex_set
-	var packed: Texture2DArray = shader_mat.get_shader_parameter("albedo_tex")
+	var packed: Texture2DArray = tex_world.get_material_array(0)
 	check(packed != null and packed.get_layers() == 32, "albedo packs 32 layers (%s)" % [packed])
+	var rough_packed: Texture2DArray = tex_world.get_material_array(2)
+	var ao_packed: Texture2DArray = tex_world.get_material_array(3)
+	check(rough_packed != null and rough_packed.get_layers() == 32 and ao_packed != null and ao_packed.get_layers() == 32,
+			"roughness and AO pack 32 layers each (%s, %s)" % [rough_packed, ao_packed])
 	# get_layer_data() needs a renderer that keeps image data; --headless uses the dummy driver, which does
 	# not. When it is readable the layer's pixels are checked; when it is not, the array's size and identity
 	# still prove the packing ran. Task 7's --shot run is the visual proof of the pixels.
@@ -181,8 +198,11 @@ func _initialize() -> void:
 	if can_read:
 		var layer0 := packed.get_layer_data(0)
 		check(layer0.get_pixel(0, 0).r > 0.9 and layer0.get_pixel(0, 0).g < 0.1, "layer 0 is the def's own texture")
+		# Unset maps must be white, so the scalar roughness and the baked voxel AO keep the whole say.
+		check(rough_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99 and ao_packed.get_layer_data(2).get_pixel(0, 0).r > 0.99,
+				"a def without maps packs flat 1.0 roughness and AO")
 	else:
-		check(packed.get_width() == 256 and packed.get_height() == 256, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
+		check(packed.get_width() == 1024 and packed.get_height() == 1024, "the arrays are packed at the common size (%dx%d)" % [packed.get_width(), packed.get_height()])
 
 	# Swapping the texture in place repacks, and so does replacing the set's materials array. A repack gives a
 	# new array object, which is observable even when the layer data is not.
@@ -190,17 +210,20 @@ func _initialize() -> void:
 	var green_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
 	green_img.fill(Color(0.0, 1.0, 0.0))
 	def0.albedo = ImageTexture.create_from_image(green_img)
-	packed = shader_mat.get_shader_parameter("albedo_tex")
+	packed = tex_world.get_material_array(0)
 	if can_read:
 		check(packed.get_layer_data(0).get_pixel(0, 0).g > 0.9, "editing a def's texture reaches the shader")
 	else:
 		check(packed != null and packed != packed_before, "editing a def's texture repacks the arrays")
 	packed_before = packed
+	var rough_before := rough_packed
+	def0.roughness_map = ImageTexture.create_from_image(green_img)
+	check(tex_world.get_material_array(2) != rough_before, "editing a def's roughness map repacks the arrays")
 	var def0b := VoxelMaterialDef.new()
 	def0b.albedo = albedo_tex
 	var swapped: Array[VoxelMaterialDef] = [def0b]
 	tex_set.materials = swapped
-	packed = shader_mat.get_shader_parameter("albedo_tex")
+	packed = tex_world.get_material_array(0)
 	if can_read:
 		check(packed.get_layer_data(0).get_pixel(0, 0).r > 0.9, "replacing materials repacks")
 	else:
@@ -221,14 +244,14 @@ func _initialize() -> void:
 	var odd_set := VoxelMaterialSet.new()
 	odd_set.materials = odd
 	# A set first, then a material: this ShaderMaterial starts with nothing packed, so a pack that is skipped
-	# leaves albedo_tex unset and this fails.
+	# leaves the albedo array unset and this fails.
 	var odd_world := VoxelWorld.new()
 	var odd_mat := ShaderMaterial.new()
 	odd_mat.shader = shader
 	odd_world.material_set = odd_set
 	odd_world.material = odd_mat
-	var odd_packed: Texture2DArray = odd_mat.get_shader_parameter("albedo_tex")
-	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 256,
+	var odd_packed: Texture2DArray = odd_world.get_material_array(0)
+	check(odd_packed != null and odd_packed.get_layers() == 32 and odd_packed.get_width() == 1024,
 			"mixed sizes and an over-long set pack 32 layers at the common size (%s)" % [odd_packed])
 
 	# An id past the cap is legal voxel data: it must mesh and render without error and must not wrap.
@@ -242,7 +265,7 @@ func _initialize() -> void:
 	over.free()
 
 	# The shader's own MATERIAL_SLOTS literal must agree with what the C++ packs.
-	var shader_text := FileAccess.get_file_as_string("res://addons/dk_voxel/voxel_terrain.gdshader")
+	var shader_text := FileAccess.get_file_as_string("res://addons/dk_voxel/voxel_terrain.gdshaderinc")
 	var slots_re := RegEx.create_from_string("MATERIAL_SLOTS\\s*=\\s*(\\d+)")
 	var found := slots_re.search(shader_text)
 	check(found != null and packed != null and found.get_string(1).to_int() == packed.get_layers(),
@@ -253,7 +276,7 @@ func _initialize() -> void:
 	var bare_mat := ShaderMaterial.new()
 	bare_mat.shader = shader
 	bare_world.material = bare_mat
-	var bare_packed: Texture2DArray = bare_mat.get_shader_parameter("albedo_tex")
+	var bare_packed: Texture2DArray = bare_world.get_material_array(0)
 	check(bare_packed != null and bare_packed.get_layers() == 32, "no material set still packs 32 layers")
 	bare_world.free()
 	tex_world.free()
@@ -314,7 +337,9 @@ func _initialize() -> void:
 	var area := AABB(Vector3(-4, 0, -4), Vector3(8, 64, 8))
 	check(await await_ready(w4, area), "endless area around the viewer is ready")
 	check(await await_idle(w4), "endless world settled after the first load")
+	check(w4.get_visibility_errors() == 0, "far levels: every chunk shows the right level after the first load (%d wrong)" % w4.get_visibility_errors())
 	var base := w4.get_stats()
+	check(base.skirted_meshes > 0 and base.skirted_meshes * 2 < base.meshes, "near skirts only where level 1 takes over (%d of %d meshes)" % [base.skirted_meshes, base.meshes])
 	print("  ..  endless at x = 0: %d chunks, %d meshes, %d bodies, %d pending" % [base.chunks, base.meshes, base.bodies, base.pending])
 	var g := w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0)
 	check(not g.is_empty(), "endless raycast hits the ground (y = %.2f)" % g.get("position", Vector3.ZERO).y)
@@ -323,14 +348,23 @@ func _initialize() -> void:
 
 	v.position = Vector3(600, 40, 0)
 	var unloaded := false
+	var vis_errors := 0
 	for i in 900:
 		await process_frame
+		vis_errors += w4.get_visibility_errors() # mid-stream: levels load and unload around the move
 		if w4.raycast(Vector3(0, 63, 0), Vector3.DOWN, 80.0).is_empty():
 			unloaded = true
 			break
 	check(unloaded, "far chunks unload when the viewer moves")
 	check(await await_ready(w4, AABB(Vector3(596, 0, -4), Vector3(8, 64, 8))), "endless area at x = 600 is ready")
 	check(await await_idle(w4), "endless world settled after the move")
+	check(vis_errors == 0 and w4.get_visibility_errors() == 0, "far levels: the right level stays on screen while the viewer teleports (%d wrong)" % (vis_errors + w4.get_visibility_errors()))
+	w4.visible = false
+	await process_frame
+	check(w4.get_visibility_errors() == 0, "far levels: a hidden world hides every chunk")
+	w4.visible = true
+	await process_frame
+	check(w4.get_visibility_errors() == 0, "far levels: a shown world brings the right level back")
 	var moved := w4.get_stats()
 	print("  ..  endless at x = 600: %d chunks, %d meshes, %d bodies, %d pending" % [moved.chunks, moved.meshes, moved.bodies, moved.pending])
 	check(moved.meshes <= base.meshes * 1.2 and moved.bodies <= base.bodies * 1.2,

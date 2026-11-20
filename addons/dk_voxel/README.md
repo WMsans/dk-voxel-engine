@@ -11,6 +11,13 @@ godot --headless --path ../.. -s tests/run_tests.gd # engine tests (physics incl
 godot --path ../.. -- --shot=/tmp/shot.png          # three staged screenshots + fps
 ```
 
+The demo's scripts are separate pieces you can copy into a game one at a time. Each one needs only a
+`VoxelWorld` (or nothing) and is wired up in `demo/main.tscn` / `demo/main.gd`:
+`voxel_tools.gd` (dig/build/smooth/bomb tools, `dug` signal), `voxel_debris.gd` (fragments from an edit
+result), `bomb.gd` + `bomb.tscn`, `player.gd` (fly/walk body, no voxel code), `voxel_util.gd` (ground
+raycast, `wait_ready`, glb stamping), `beauty_shot.gd`, `cel/` (post-process passes). `main.gd` is the
+demo game itself: profiles, spawning, gold, the ruins and trees.
+
 ## Using it
 
 One node, `VoxelWorld`; generators are `VoxelGenerator` resources. Set the properties, `add_child`,
@@ -52,16 +59,33 @@ Properties:
   image files: the addon packs one `Texture2DArray` layer per material id and triplanar-projects them, so a
   game only assigns resources — no C++, no shader edit, no rebuild. The two colours are a tint ramp over the
   albedo, driven by the albedo's own luminance; set both to white to show a texture unmodified, and see
-  `demo/textures/` plus `demo/main.gd` for the working example. `pattern_scale` is tiles per metre. A
-  material with no textures gets a built-in grain and a flat normal. The shader's `normal_strength`
+  `demo/textures/` plus `demo/materials.tres` for the working example. `pattern_scale` is tiles per metre. A
+  material with no textures gets a flat grey albedo and a flat normal. The shader's `normal_strength`
   uniform scales the normal map if it reads too strong at a given tiling. Ids run to 32; a voxel carrying a
   higher id renders as the last slot, and a set with more defs than that reports an error. In a non-empty
   set an id without a def reads as entry 0; with no set, or an empty one, every id gets a zero-hardness grey
   default. Hardness 255 is unbreakable and an erase needs `power >= hardness`.
+  `inner_material` (Bananza's InnerMaterial) is the id a dig turns this material into: every solid voxel
+  within 2 cells of the cut takes it, so a crater shows the broken inside (grass → torn turf, rock → broken
+  rock) while untouched ground keeps its outer look. -1 = stays itself. Chains advance one step per dig.
+- `expose_inner_material` — on by default; turn it off around digs that author shapes (doors, windows) rather
+  than destroy them, so they stay clean.
 - `save_directory` — where edited chunks are written; empty keeps edits in memory only (see *Saving*).
-- `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms.
+- `material` — the terrain shader material (`voxel_terrain.gdshader`); the material set fills its uniforms. For a
+  variant (other render modes, extra outputs), include `voxel_terrain.gdshaderinc` after your own
+  `shader_type`/`render_mode` and optionally `#define VOXEL_FRAGMENT_HOOK` statements to run at the end of
+  `fragment()`; `demo/cel/voxel_terrain_cel.gdshader` is the demo's cel-shaded one.
 - `threads`, `lod1_distance`, `lod2_distance`, `collision_distance`, `collision_layer` — meshing threads
   (0 = cores − 2) and LOD/collision tuning.
+- `far_levels` — endless worlds only: coarse far-field levels beyond the viewers' `view_distance`, default 6
+  (≈ 11 km with the camera fallback; 0 = off; applies on `reset()`). Level k samples the generator at
+  `cell_size · 2^(k+1)` and reaches `view_distance · 2^k`, so each level costs about the same and the view
+  distance doubles per level (the nested-LOD scheme of voxy and Distant Horizons). A level hands an area to the
+  finer one only once all of it is meshed, so streaming never shows holes; skirts hide the cracks where levels
+  meet. Far terrain has no collision and is not saved: an edit is mirrored into the levels fine enough to show
+  it, and lasts there until that far chunk unloads. Their vertical reach is `vertical_view_distance` plus two
+  chunks rather than doubling, so from very high up the ground below is drawn coarse: raise the viewer's
+  `vertical_view_distance` for flying games. Give the camera a `far` that reaches the horizon.
 
 Changing `cell_size`, `bounds_size` or `generator` takes effect on the next `reset()`; `material_set`
 applies immediately, to the hardness table and the shader uniforms.
@@ -78,6 +102,12 @@ world.build_box(xf, half_extents, 7)       # sharp = true: exact edges and corne
 world.dig_cylinder(xf, radius, half_height, 9)
 var hit := world.raycast(from, dir, 14.0)  # {position, normal, material}; marches the voxels
 ```
+
+`build_mesh(mesh, transform, material)` voxelizes any `Mesh` at the world's cell size when it is called
+and builds the solid it encloses: load a `.glb` and stamp it in, no offline step. Shells must be closed
+and consistently wound; overlapping ones (a canopy of leaf clusters) union. Parts thinner than about a
+cell vanish, so scale small props up. The demo plants the anime-tree-rendering trees this way
+(`VoxelUtil.plant_tree` in `demo/voxel_util.gd`, one call per mesh, wood before leaves); five trees take about 0.4 s.
 
 ### Reacting to the world
 

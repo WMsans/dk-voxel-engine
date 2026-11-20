@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://0nmaqbpe7d35"
-path="res://.godot/imported/rock_albedo.png-36be6e666db5fd983e53a16379e9954e.ctex"
+uid="uid://doadptqdoyrbr"
+path="res://.godot/imported/soil_height.png-560717bd32e943630a2d1c64169ebb45.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://demo/textures/rock_albedo.png"
-dest_files=["res://.godot/imported/rock_albedo.png-36be6e666db5fd983e53a16379e9954e.ctex"]
+source_file="res://demo/textures/soil/soil_height.png"
+dest_files=["res://.godot/imported/soil_height.png-560717bd32e943630a2d1c64169ebb45.ctex"]
 
 [params]
 

@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/material.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/texture2d_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -40,8 +41,12 @@ struct WorldState {
 		Vector3 offset; // chunk origin in metres, relative to the world node (mesh vertices are chunk-relative)
 		int8_t lod = -1; // LOD on screen, -1 = never meshed
 		bool collision = false; // the mesh on screen was built with collision
+		bool skirts = false; // near field: the mesh on screen has skirts (see near_skirts)
 		bool queued = false;
 		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
+		bool visible = true; // the instance's visibility, as last pushed to the RenderingServer
+		bool split = false; // far levels: its children are all meshed and drawn in its place
+		bool out_of_reach = false; // far levels: generated but not meshed, because no viewer reached it yet
 		uint32_t version = 1, queued_version = 0, applied_version = 0; // version bumps on every edit
 		int32_t tris = 0;
 	};
@@ -61,6 +66,7 @@ struct WorldState {
 	struct Job {
 		uint64_t gen = 0; // the world generation that queued it; results from an older one are dropped
 		bool is_gen = false; // endless: fill/restore a chunk instead of meshing it
+		int8_t level = 0; // 0 = the near volume, k = far[k - 1]
 		ChunkKey key;
 		PackedByteArray stored;
 		uint32_t stored_size = 0;
@@ -68,7 +74,7 @@ struct WorldState {
 		float prio = 0;
 		int32_t index = -1;
 		int8_t lod = 0;
-		bool collision = false, urgent = false;
+		bool collision = false, urgent = false, skirts = false;
 		uint32_t version = 0;
 		bool operator<(const Job &o) const { return prio > o.prio; }
 	};
@@ -86,6 +92,20 @@ struct WorldState {
 	String save_directory; // empty = edits never reach disk; the unload store differs, the path is the same
 	String generator_class; // `generator`'s class name in save headers, empty when there is none
 	std::vector<Viewer> active_viewers;
+	// Far field (endless only), the way voxy and VoxelLodTerrain do it: level k = 1..far_levels is a coarse copy of the
+	// world, cell * 2^(k+1), filled straight from the generator and reaching view_distance * 2^k. A level-k chunk covers
+	// whole level-(k-1) chunks (4x4x4 near chunks, then 2x2x2) and hands over to them once all are meshed (see
+	// chunk_changed), so each level costs about the same and the view distance doubles per level. No collision, saves
+	// or raycasts.
+	struct FarLevel {
+		std::unique_ptr<Volume> vol;
+		std::unordered_map<ChunkKey, Chunk, ChunkKeyHash> chunks;
+		std::vector<Vector3i> streamed_at; // the viewers' chunks at this level when it was last streamed
+	};
+	std::vector<FarLevel> far; // far[k - 1] = level k
+	int far_levels = 6;
+	bool need_far = false; // a far level still has to follow the viewers (stream_far does one level a frame)
+	bool shown = true; // the node's is_visible_in_tree(), as the chunk instances last saw it
 	std::shared_ptr<const Generator> active_generator; // rebuilt by ensure_volume(), read by the workers
 	Ref<Material> material;
 	Ref<VoxelGenerator> generator;
@@ -95,7 +115,12 @@ struct WorldState {
 	int threads = 0; // 0 = cores - 2, min 1
 	float lod1_distance = 90, lod2_distance = 170, collision_distance = 40;
 	uint32_t collision_layer = 1;
+	bool expose_inner_material = true;
 	uint64_t material_fingerprint = 0; // the texture identity the packed arrays were built from
+	RID material_pushed; // the material the arrays were last pushed to
+	// The packed arrays live here, not in the material: the RenderingServer only holds their RIDs, and keeping them out
+	// of the ShaderMaterial's properties keeps the generated data out of any scene or .tres the material is saved in.
+	Ref<Texture2DArray> material_arrays[4];
 
 	std::priority_queue<Job> jobs;
 	std::vector<Result> results;
@@ -135,6 +160,20 @@ void stream_endless(WorldState &st);
 void worker(WorldState &st);
 void start_workers(WorldState &st);
 void stop_workers(WorldState &st);
+// voxel_far.cpp: the far-field levels and which level's chunk is on screen.
+void create_far(WorldState &st);
+void free_far(WorldState &st);
+bool stream_far(WorldState &st); // restreams the finest level whose viewers moved; false = all levels follow
+void queue_far_mesh(WorldState &st, int k, const ChunkKey &key, std::vector<WorldState::Job> &out);
+void push_jobs(WorldState &st, std::vector<WorldState::Job> &jobs);
+void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldState::Result &r);
+// A level-k chunk was meshed (pass it as `c`) or unloaded: puts the right level on screen there.
+void chunk_changed(WorldState &st, int k, const ChunkKey &key, WorldState::Chunk *c = nullptr);
+void refresh_visibility(WorldState &st); // after st.shown changed
+// A near chunk needs skirts only where it meets a level-1 chunk drawn coarse: near seams are bit-exact, and a skirt
+// there only pokes through thin dug walls and shows from inside the ground.
+bool near_skirts(const WorldState &st, const ChunkKey &key);
+int visibility_errors(WorldState &st); // chunks whose visibility differs from a from-scratch recomputation; for tests
 
 // voxel_save.cpp: one file per modified chunk, the in-memory store, and the flush.
 String chunk_file_path(const ChunkKey &key, const String &dir);

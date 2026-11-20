@@ -11,6 +11,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 using namespace godot;
@@ -48,7 +49,8 @@ void VoxelWorld::ensure_volume() {
 		}
 		for (dkv::WorldState::Chunk &c : st->chunks) c.version++;
 	}
-	dkv::apply_hardness(*st);
+	dkv::create_far(*st);
+	dkv::apply_material_rules(*st);
 	st->need_scan = st->need_stream = true;
 }
 
@@ -65,6 +67,10 @@ dkv::WorldState::Chunk *VoxelWorld::find_chunk(int cx, int cy, int cz) {
 
 void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	if (r.job.gen != st->generation) return; // queued before a reset(): never touch the new world
+	if (r.job.level > 0) {
+		if (is_inside_tree()) dkv::apply_far(*st, *this, gx(), r);
+		return;
+	}
 	if (r.job.is_gen) {
 		if (dkv::WorldState::Chunk *c = find_chunk(r.job.key.x, r.job.key.y, r.job.key.z)) c->gen_queued = false;
 		// A restored chunk keeps its store entry: it is the authoritative copy until an edit overwrites it.
@@ -83,18 +89,18 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	st->stat_ms += r.ms;
 	st->stat_jobs++;
 	c.applied_version = r.job.version;
-	if (!r.has) {
+	if (r.has) {
+		upload_chunk(*st, *this, c, r.mesh, st->chunk_transform(gx(), c), r.job.collision && r.job.lod == 0);
+	} else {
 		free_chunk(*st, c);
-		c.lod = r.job.lod;
 		c.collision = r.job.collision;
-		return;
 	}
 	c.lod = r.job.lod;
-	const bool want_body = r.job.collision && r.job.lod == 0;
-	upload_chunk(*st, *this, c, r.mesh, st->chunk_transform(gx(), c), want_body);
+	c.skirts = r.job.skirts;
+	dkv::chunk_changed(*st, 0, c.key, &c);
 }
 
-Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp) {
+Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp, const dkv::SdfGrid *grid) {
 	ensure_volume();
 	Dictionary out, removed;
 	float total = 0;
@@ -104,12 +110,32 @@ Dictionary VoxelWorld::do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf,
 		Transform3D l = gx().affine_inverse() * xf;
 		Basis b = l.basis.orthonormalized();
 		const float B[9] = {(float)b[0][0], (float)b[0][1], (float)b[0][2], (float)b[1][0], (float)b[1][1], (float)b[1][2], (float)b[2][0], (float)b[2][1], (float)b[2][2]};
-		dkv::EditResult r = st->vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp);
+		dkv::EditResult r = st->vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp, grid);
 		for (int z = r.cmin[2]; z <= r.cmax[2]; z++)
 			for (int y = r.cmin[1]; y <= r.cmax[1]; y++)
 				for (int x = r.cmin[0]; x <= r.cmax[0]; x++)
 					if (dkv::WorldState::Chunk *ch = find_chunk(x, y, z)) ch->version++;
 		st->need_scan |= r.changed;
+		// Mirror the edit into the far levels fine enough to show it, so a crater is still there from afar.
+		// ponytail: far chunks regenerate from the generator when they unload, so a far edit lasts until then.
+		std::vector<dkv::WorldState::Job> jobs;
+		for (int k = 1; r.changed && k <= (int)st->far.size(); k++) {
+			dkv::WorldState::FarLevel &L = st->far[k - 1];
+			if (L.vol->cell > MAX(half.x, MAX(half.y, half.z))) break; // smaller than a cell: only dents the coarse surface
+			memcpy(L.vol->hardness, st->vol->hardness, sizeof L.vol->hardness);
+			memcpy(L.vol->inner, st->vol->inner, sizeof L.vol->inner);
+			L.vol->expose_inner = st->vol->expose_inner;
+			dkv::EditResult fr = L.vol->edit(s, m, {(float)l.origin.x, (float)l.origin.y, (float)l.origin.z}, {(float)half.x, (float)half.y, (float)half.z}, B, (uint8_t)CLAMP(mat, 0, 255), power, strength, sharp, grid);
+			for (int z = fr.cmin[2]; z <= fr.cmax[2]; z++)
+				for (int y = fr.cmin[1]; y <= fr.cmax[1]; y++)
+					for (int x = fr.cmin[0]; x <= fr.cmax[0]; x++) {
+						auto it = L.chunks.find(dkv::ChunkKey(x, y, z));
+						if (it == L.chunks.end()) continue;
+						it->second.version++;
+						dkv::queue_far_mesh(*st, k, it->first, jobs);
+					}
+		}
+		dkv::push_jobs(*st, jobs);
 		const float vv = st->vol->cell * st->vol->cell * st->vol->cell;
 		for (int i = 0; i < 256; i++)
 			if (r.removed[i] > 0) {
@@ -145,13 +171,16 @@ void VoxelWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("dig_box", "transform", "half_extents", "power", "sharp"), &VoxelWorld::dig_box, DEFVAL(0), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("build_cylinder", "transform", "radius", "half_height", "material", "sharp"), &VoxelWorld::build_cylinder, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("dig_cylinder", "transform", "radius", "half_height", "power", "sharp"), &VoxelWorld::dig_cylinder, DEFVAL(0), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("build_mesh", "mesh", "transform", "material"), &VoxelWorld::build_mesh);
 	ClassDB::bind_method(D_METHOD("raycast", "origin", "direction", "max_distance"), &VoxelWorld::raycast);
 	ClassDB::bind_method(D_METHOD("get_density", "position"), &VoxelWorld::get_density);
 	ClassDB::bind_method(D_METHOD("is_area_ready", "aabb", "need_collision"), &VoxelWorld::is_area_ready, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("set_lod_error", "lod", "error"), &VoxelWorld::set_lod_error);
 	ClassDB::bind_method(D_METHOD("get_world_size"), &VoxelWorld::get_world_size);
+	ClassDB::bind_method(D_METHOD("get_material_array", "kind"), &VoxelWorld::get_material_array);
 	ClassDB::bind_method(D_METHOD("get_pending_count"), &VoxelWorld::get_pending_count);
 	ClassDB::bind_method(D_METHOD("get_stats"), &VoxelWorld::get_stats);
+	ClassDB::bind_method(D_METHOD("get_visibility_errors"), &VoxelWorld::get_visibility_errors);
 #define PROP(type, name) \
 	ClassDB::bind_method(D_METHOD("set_" #name, "v"), &VoxelWorld::set_##name); \
 	ClassDB::bind_method(D_METHOD("get_" #name), &VoxelWorld::get_##name); \
@@ -163,7 +192,9 @@ void VoxelWorld::_bind_methods() {
 	PROP(Variant::FLOAT, lod2_distance)
 	PROP(Variant::FLOAT, collision_distance)
 	PROP(Variant::INT, collision_layer)
+	PROP(Variant::INT, far_levels)
 	PROP(Variant::STRING, save_directory)
+	PROP(Variant::BOOL, expose_inner_material)
 #undef PROP
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &VoxelWorld::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &VoxelWorld::get_material);
@@ -185,20 +216,21 @@ void VoxelWorld::_notification(int what) {
 	if (what == NOTIFICATION_TRANSFORM_CHANGED || what == NOTIFICATION_VISIBILITY_CHANGED) {
 		if (!is_inside_tree()) return;
 		RenderingServer *rs = RenderingServer::get_singleton();
-		for (dkv::WorldState::Chunk &c : st->chunks) {
+		auto place = [&](dkv::WorldState::Chunk &c) {
 			Transform3D xf = st->chunk_transform(gx(), c);
-			if (c.instance.is_valid()) {
-				rs->instance_set_transform(c.instance, xf);
-				rs->instance_set_visible(c.instance, is_visible_in_tree());
-			}
+			if (c.instance.is_valid()) rs->instance_set_transform(c.instance, xf);
 			if (c.body.is_valid()) PhysicsServer3D::get_singleton()->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, xf);
-		}
+		};
+		for (dkv::WorldState::Chunk &c : st->chunks) place(c);
+		for (dkv::WorldState::FarLevel &L : st->far)
+			for (auto &[key, c] : L.chunks) place(c);
 	} else if (what == NOTIFICATION_EXIT_WORLD) { // RIDs belong to the world we are leaving; remesh on re-entry
 		for (dkv::WorldState::Chunk &c : st->chunks) {
 			free_chunk(*st, c);
 			c.applied_version = 0;
 		}
-		st->need_scan = true;
+		dkv::free_far(*st); // restreamed on re-entry
+		st->need_scan = st->need_stream = true;
 	}
 }
 
@@ -210,6 +242,7 @@ VoxelWorld::~VoxelWorld() {
 	dkv::save_world(*st); // flush what this world edited; never deletes files
 	dkv::stop_workers(*st);
 	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
+	dkv::free_far(*st);
 }
 
 Error VoxelWorld::save() { return dkv::save_world(*st); }
@@ -225,6 +258,8 @@ void VoxelWorld::reset() {
 			if (st->vol->is_modified(key.x, key.y, key.z)) store_chunk(*st, key, false); // the flush just failed: keep in memory
 	}
 	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
+	dkv::free_far(*st);
+	st->far.clear();
 	st->chunks.clear();
 	st->chunk_lookup.clear();
 	st->vol.reset();
@@ -237,6 +272,7 @@ void VoxelWorld::_process(double) {
 	if (!st->vol || st->workers.empty()) return;
 	dkv::update_viewers(*st, *this);
 	if (st->need_scan) dkv::scan(*st);
+	if (st->need_far) st->need_far = dkv::stream_far(*st);
 	std::vector<dkv::WorldState::Result> rs;
 	{
 		std::lock_guard lk(st->qm);
@@ -251,6 +287,10 @@ void VoxelWorld::_process(double) {
 		apply(st->pending.front());
 		st->pending.pop_front();
 	}
+	if (st->shown != is_visible_in_tree()) {
+		st->shown = !st->shown;
+		dkv::refresh_visibility(*st);
+	}
 }
 
 Dictionary VoxelWorld::dig_sphere(Vector3 c, float r, int power) { return do_edit(dkv::SPHERE, dkv::ERASE, Transform3D(Basis(), c), Vector3(r, r, r), 0, power, 1, false); }
@@ -260,6 +300,24 @@ Dictionary VoxelWorld::build_box(const Transform3D &xf, Vector3 half, int mat, b
 Dictionary VoxelWorld::dig_box(const Transform3D &xf, Vector3 half, int power, bool sharp) { return do_edit(dkv::BOX, dkv::ERASE, xf, half, 0, power, 1, sharp); }
 Dictionary VoxelWorld::build_cylinder(const Transform3D &xf, float r, float hh, int mat, bool sharp) { return do_edit(dkv::CYLINDER, dkv::BUILD, xf, Vector3(r, hh, r), mat, 0, 1, sharp); }
 Dictionary VoxelWorld::dig_cylinder(const Transform3D &xf, float r, float hh, int power, bool sharp) { return do_edit(dkv::CYLINDER, dkv::ERASE, xf, Vector3(r, hh, r), 0, power, 1, sharp); }
+
+Dictionary VoxelWorld::build_mesh(const Ref<Mesh> &mesh, const Transform3D &xf, int mat) {
+	ensure_volume();
+	ERR_FAIL_COND_V(mesh.is_null() || !st->vol, Dictionary());
+	const Transform3D l = gx().affine_inverse() * xf; // into volume space, where the grid lines up with the voxels
+	const PackedVector3Array faces = mesh->get_faces();
+	std::vector<dkv::Vec3> tris;
+	tris.reserve(faces.size());
+	for (const Vector3 &p : faces) {
+		const Vector3 q = l.xform(p);
+		tris.push_back({(float)q.x, (float)q.y, (float)q.z});
+	}
+	const dkv::SdfGrid g = dkv::voxelize_triangles(tris, st->vol->cell);
+	if (g.sd.empty()) return Dictionary();
+	const Vector3 half = Vector3(g.n[0] - 1, g.n[1] - 1, g.n[2] - 1) * (g.cell * 0.5f);
+	const Vector3 center = Vector3(g.origin[0], g.origin[1], g.origin[2]) + half;
+	return do_edit(dkv::MESH, dkv::BUILD, gx() * Transform3D(Basis(), center), half, mat, 0, 1, false, &g);
+}
 
 // Marches the voxel field itself, so it works before (and beyond where) collision exists.
 Dictionary VoxelWorld::raycast(Vector3 origin, Vector3 dir, float max_dist) {
@@ -339,6 +397,12 @@ Dictionary VoxelWorld::get_stats() {
 	d["meshes"] = st->stat_meshes;
 	d["bodies"] = st->stat_bodies;
 	d["chunks"] = (int64_t)(st->vol ? st->vol->chunk_count() : 0);
+	int64_t far_chunks = 0;
+	for (const dkv::WorldState::FarLevel &L : st->far) far_chunks += (int64_t)L.chunks.size();
+	d["far_chunks"] = far_chunks;
+	int64_t skirted = 0; // near meshes with skirts: only the ring that meets level 1
+	for (const dkv::WorldState::Chunk &c : st->chunks) skirted += c.skirts && c.tris > 0;
+	d["skirted_meshes"] = skirted;
 	d["pending"] = get_pending_count();
 	d["mesh_ms"] = st->stat_jobs ? st->stat_ms / st->stat_jobs : 0.0;
 	d["threads"] = (int)st->workers.size();
@@ -356,7 +420,7 @@ void VoxelWorld::set_generator(const Ref<VoxelGenerator> &g) {
 	st->generator_class = g.is_valid() ? g->get_class() : String();
 }
 void VoxelWorld::_materials_changed() {
-	dkv::apply_hardness(*st);
+	dkv::apply_material_rules(*st);
 	dkv::apply_material_set(*st);
 }
 

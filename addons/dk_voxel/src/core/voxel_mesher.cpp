@@ -391,4 +391,37 @@ bool Volume::mesh_chunk(int ccx, int ccy, int ccz, int lod, MeshData &out) const
 	return !out.idx.empty();
 }
 
+void add_skirts(MeshData &m, float depth) {
+	// Vertices are split by material and at sharp features, so edges are matched by position: border positions
+	// are snapped (see emit above), so the same corner is the same float triple wherever it was emitted.
+	const size_t nv = m.pos.size() / 3, ni = m.idx.size();
+	std::unordered_map<uint64_t, int32_t> canon;
+	std::vector<int32_t> cid(nv);
+	for (size_t i = 0; i < nv; i++) {
+		uint32_t b[3];
+		memcpy(b, &m.pos[i * 3], sizeof b);
+		const uint64_t h = (uint64_t)b[0] * 0x9e3779b97f4a7c15ull ^ (uint64_t)b[1] * 0xc2b2ae3d27d4eb4full ^ (uint64_t)b[2] * 0x165667b19e3779f9ull;
+		cid[i] = canon.emplace(h, (int32_t)canon.size()).first->second; // ponytail: a 64-bit hash collision would merge two corners
+	}
+	// Directed edge (a -> b) per triangle; an edge is open when no triangle has the reverse.
+	std::unordered_map<uint64_t, uint32_t> half; // key canonical (a, b) -> index of the triangle edge
+	auto key = [&](int32_t a, int32_t b) { return (uint64_t)(uint32_t)cid[a] << 32 | (uint32_t)cid[b]; };
+	for (size_t t = 0; t < ni; t++) half[key(m.idx[t], m.idx[t - t % 3 + (t + 1) % 3])] = (uint32_t)t;
+	m.skirt_from = ni;
+	for (size_t t = 0; t < ni; t++) {
+		const int32_t a = m.idx[t], b = m.idx[t - t % 3 + (t + 1) % 3];
+		if (cid[a] == cid[b] || half.count(key(b, a))) continue;
+		int32_t d[2];
+		for (int e = 0; e < 2; e++) { // the strip's far edge: the corner pushed into the surface along its normal
+			const int32_t s = e ? b : a;
+			d[e] = (int32_t)(m.pos.size() / 3);
+			for (int c = 0; c < 3; c++) m.pos.push_back(m.pos[s * 3 + c] - m.nrm[s * 3 + c] * depth);
+			for (int c = 0; c < 3; c++) m.nrm.push_back(m.nrm[s * 3 + c]);
+			for (int c = 0; c < 4; c++) m.col.push_back(m.col[s * 4 + c]);
+		}
+		// Continue the surface across the edge with the same winding: the neighbour triangle would use b -> a.
+		m.idx.insert(m.idx.end(), {b, a, d[0], b, d[0], d[1]});
+	}
+}
+
 } // namespace dkv

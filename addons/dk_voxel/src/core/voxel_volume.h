@@ -1,5 +1,6 @@
 // Chunk storage, edits, queries and per-chunk serialisation. Godot-free (see selftest.cpp).
 #pragma once
+#include "sdf_grid.h"
 #include "voxel_generator.h"
 
 #include <memory>
@@ -21,6 +22,11 @@ public:
 	const int bmin[3], bmax[3]; // chunk bounds, exclusive max; unused when endless
 	float lod_error[3] = {0.0f, 0.02f, 0.12f}; // QEF error budget per LOD (cells^2)
 	uint8_t hardness[256] = {}; // erase needs power >= hardness
+	// Bananza's InnerMaterial: an erase rewrites every voxel it carves into to inner[m], so a dug surface shows
+	// its broken inside (grass -> torn turf, rock -> broken rock). Identity = no change. Chains (a -> b -> c)
+	// advance one step per dig over the same voxels.
+	uint8_t inner[256];
+	bool expose_inner = true; // false while authoring (ruins, level dressing): carve without the broken look
 
 	bool in_bounds(int cx, int cy, int cz) const; // always true when endless
 	bool has_chunk(int cx, int cy, int cz) const;
@@ -32,7 +38,7 @@ public:
 	// and the uniform voxel (2 bytes) or 1024 voxel bytes or 1024 + 512*9 Hermite bytes. Empty if missing.
 	std::vector<uint8_t> serialize_chunk(int cx, int cy, int cz) const;
 	bool deserialize_chunk(int cx, int cy, int cz, const uint8_t *data, size_t size); // false on bad data
-	void remove_chunk(int cx, int cy, int cz);
+	void remove_chunks(const std::vector<ChunkKey> &keys); // one lock for all: a writer waits for every meshing worker
 	bool is_modified(int cx, int cy, int cz) const;
 	void clear_modified(int cx, int cy, int cz);
 
@@ -44,7 +50,8 @@ public:
 
 	// center/half in world units; basis = 3x3 rotation, shape-local axes in columns. half.x = radius for
 	// SPHERE and CYLINDER (half.y = cylinder half height). strength scales SMOOTH. sharp writes Hermite data.
-	EditResult edit(Shape s, Mode m, Vec3 center, Vec3 half, const float basis[9], uint8_t material, int power, float strength, bool sharp);
+	// MESH reads `grid` in volume coordinates and ignores the basis; center/half = the grid's box.
+	EditResult edit(Shape s, Mode m, Vec3 center, Vec3 half, const float basis[9], uint8_t material, int power, float strength, bool sharp, const SdfGrid *grid = nullptr);
 
 	// Thread-safe against edit(). Returns false (and leaves out empty) when the chunk has no surface.
 	bool mesh_chunk(int x, int y, int z, int lod, MeshData &out) const;

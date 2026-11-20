@@ -21,24 +21,6 @@ constexpr int MAX_SAMPLES = 2048; // per axis; a sanity bound, not a design limi
 
 } // namespace
 
-float LevelTerrain::Part::sample(float x, float y, float z) const {
-	const float far = 127.0f / SD_SCALE * cell;
-	const float g[3] = {(x - origin[0]) / cell, (y - origin[1]) / cell, (z - origin[2]) / cell};
-	int i[3];
-	float f[3];
-	for (int a = 0; a < 3; a++) {
-		if (!(g[a] >= 0.0f && g[a] <= n[a] - 1)) return far;
-		i[a] = std::min((int)g[a], n[a] - 2);
-		f[a] = g[a] - i[a];
-	}
-	const size_t sy = n[0], sz = (size_t)n[0] * n[1];
-	const int8_t *s = sd.data() + i[0] + i[1] * sy + i[2] * sz;
-	auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
-	const float c00 = lerp(s[0], s[1], f[0]), c10 = lerp(s[sy], s[sy + 1], f[0]);
-	const float c01 = lerp(s[sz], s[sz + 1], f[0]), c11 = lerp(s[sz + sy], s[sz + sy + 1], f[0]);
-	return lerp(lerp(c00, c10, f[1]), lerp(c01, c11, f[1]), f[2]) / SD_SCALE * cell;
-}
-
 bool LevelTerrain::load(const uint8_t *data, size_t len, std::string &err) {
 	Reader r{data, data + len};
 	char magic[4];
@@ -90,7 +72,7 @@ void LevelTerrain::generate_block(const int origin[3], float cell, Voxel out[512
 		uint8_t m = 0;
 		for (int k = 0; k < nhit; k++) {
 			const Part &p = *hit[k];
-			const float s = p.sample(x, y, z);
+			const float s = p.sample(Vec3(x, y, z));
 			if (p.mode == PASTE) {
 				if (s < 0.0f || s < sd) m = p.material; // a later part overwrites the material inside it
 				sd = std::min(sd, s);

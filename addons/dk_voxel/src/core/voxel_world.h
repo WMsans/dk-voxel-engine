@@ -6,6 +6,7 @@
 #include "voxel_world_state.h"
 
 #include <godot_cpp/classes/material.hpp>
+#include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/ref.hpp>
 
@@ -36,7 +37,7 @@ class VoxelWorld : public Node3D {
 	// Re-packs the textures and re-applies hardness when the material set or any def in it changes.
 	void _materials_changed();
 
-	Dictionary do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp);
+	Dictionary do_edit(dkv::Shape s, dkv::Mode m, const Transform3D &xf, Vector3 half, int mat, int power, float strength, bool sharp, const dkv::SdfGrid *grid = nullptr);
 
 protected:
 	static void _bind_methods();
@@ -64,6 +65,9 @@ public:
 	Dictionary dig_box(const Transform3D &xf, Vector3 half, int power, bool sharp);
 	Dictionary build_cylinder(const Transform3D &xf, float r, float hh, int mat, bool sharp);
 	Dictionary dig_cylinder(const Transform3D &xf, float r, float hh, int power, bool sharp);
+	// Voxelizes the mesh's triangles (placed by `xf`, scale included) and builds the solid they enclose.
+	// Closed, consistently wound shells; overlapping ones union. Parts thinner than about a cell vanish.
+	Dictionary build_mesh(const Ref<Mesh> &mesh, const Transform3D &xf, int mat);
 
 	// Marches the voxel field itself, so it works before (and beyond where) collision exists.
 	Dictionary raycast(Vector3 origin, Vector3 dir, float max_dist);
@@ -75,13 +79,23 @@ public:
 	Vector3 get_world_size() const;
 	int get_pending_count();
 	Dictionary get_stats();
+	// Test hook: chunks whose on-screen state differs from a from-scratch pass over every level. Always 0.
+	int get_visibility_errors() { return dkv::visibility_errors(*st); }
 
 	void set_material(const Ref<Material> &m);
 	Ref<Material> get_material() const { return st->material; }
+	// The packed material textures the shader samples: 0 albedo, 1 normal, 2 roughness, 3 AO (one layer per id).
+	Ref<Texture2DArray> get_material_array(int kind) const { return kind >= 0 && kind < 4 ? st->material_arrays[kind] : Ref<Texture2DArray>(); }
 	void set_generator(const Ref<VoxelGenerator> &g);
 	Ref<VoxelGenerator> get_generator() const { return st->generator; }
 	void set_save_directory(const String &v) { st->save_directory = v; }
 	String get_save_directory() const { return st->save_directory; }
+	// Digs turn carved voxels into their material's inner_material. Turn off while authoring with digs.
+	void set_expose_inner_material(bool v) {
+		st->expose_inner_material = v;
+		if (st->vol) st->vol->expose_inner = v;
+	}
+	bool get_expose_inner_material() const { return st->expose_inner_material; }
 	void set_material_set(const Ref<VoxelMaterialSet> &s);
 	Ref<VoxelMaterialSet> get_material_set() const { return st->material_set; }
 	void set_cell_size(float v) { st->cell_size = v; }
@@ -98,4 +112,7 @@ public:
 	float get_collision_distance() const { return st->collision_distance; }
 	void set_collision_layer(uint32_t v);
 	uint32_t get_collision_layer() const { return st->collision_layer; }
+	// Coarse far-field levels (endless worlds): each doubles the view distance. 0 = off. Applies on reset().
+	void set_far_levels(int v) { st->far_levels = v; }
+	int get_far_levels() const { return st->far_levels; }
 };

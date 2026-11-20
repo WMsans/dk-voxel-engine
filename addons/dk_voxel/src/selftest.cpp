@@ -129,6 +129,24 @@ int main() {
 		CHECK(!v.edit(SPHERE, ERASE, {16, 16, 16}, {9, 0, 0}, ID, 0, 3, 1, false).changed, "unbreakable material was dug");
 	}
 
+	printf("inner material\n");
+	{
+		Volume v(4, 4, 4, 0.5f);
+		v.edit(BOX, BUILD, {16, 16, 16}, {10, 10, 10}, ID, 1, 0, 1, false);
+		v.inner[1] = 2; v.inner[2] = 3; // grass -> torn turf -> soil
+		v.edit(SPHERE, ERASE, {16, 26, 16}, {3.2f, 0, 0}, ID, 0, 0, 1, false);
+		Voxel dug = v.get(32, 45, 32), below = v.get(32, 38, 32), far = v.get(52, 52, 52);
+		CHECK(dug.d >= 128 && dug.m == 2, "dug surface voxel: d %d m %d", dug.d, dug.m);
+		CHECK(below.m == 1 && far.m == 1, "untouched voxels changed: %d %d", below.m, far.m);
+		CHECK(v.get(32, 44, 32).m == 2, "solid 1.6 cells from the cut should be repainted: %d", v.get(32, 44, 32).m);
+		CHECK(!v.edit(SPHERE, ERASE, {10, 28.6f, 10}, {2, 0, 0}, ID, 0, 0, 1, false).changed && v.get(20, 52, 20).m == 1, "a dig in the air repainted the ground");
+		v.edit(SPHERE, ERASE, {16, 26, 16}, {3.4f, 0, 0}, ID, 0, 0, 1, false);
+		CHECK(v.get(32, 45, 32).m == 3, "second dig should advance the chain: %d", v.get(32, 45, 32).m);
+		v.expose_inner = false;
+		v.edit(SPHERE, ERASE, {24, 26, 24}, {3.2f, 0, 0}, ID, 0, 0, 1, false);
+		CHECK(v.get(48, 45, 48).m == 1, "expose_inner off still swapped: %d", v.get(48, 45, 48).m);
+	}
+
 	printf("sharp box (Hermite data)\n");
 	{
 		Volume s(4, 4, 4, 0.5f), r(4, 4, 4, 0.5f);
@@ -208,7 +226,7 @@ int main() {
 		CHECK(v.is_modified(0, 0, 0), "edit did not mark the chunk");
 		MeshData before; v.mesh_chunk(0, 0, 0, 0, before);
 		auto bytes = v.serialize_chunk(0, 0, 0);
-		v.remove_chunk(0, 0, 0);
+		v.remove_chunks({ChunkKey(0, 0, 0)});
 		CHECK(!v.has_chunk(0, 0, 0) && !v.neighbors_ready(0, 0, 0), "remove");
 		CHECK(v.deserialize_chunk(0, 0, 0, bytes.data(), bytes.size()) && !v.is_modified(0, 0, 0), "restore");
 		MeshData after; v.mesh_chunk(0, 0, 0, 0, after);
@@ -327,6 +345,55 @@ int main() {
 		CHECK(v.get(32, 32, 32).d < 128 && v.get(32, 24, 32).d > 128, "erase did not hollow the ball");
 		CHECK(v.get(32, 40, 32).m == 5 && v.get(32, 24, 32).m == 3, "paint: top %d bottom %d", v.get(32, 40, 32).m, v.get(32, 24, 32).m);
 		CHECK(v.get(2, 2, 2).d == 0, "outside every part is air");
+	}
+
+	printf("mesh voxelizer\n");
+	{ // two overlapping 6 m cubes (plain parity would hollow the overlap), and a third wound inside out
+		std::vector<Vec3> tris;
+		auto cube = [&](Vec3 lo, float s, bool flip) {
+			for (int a = 0; a < 3; a++)
+				for (int side = 0; side < 2; side++) {
+					const int u = (a + 1) % 3, w = (a + 2) % 3;
+					Vec3 q[4];
+					for (int k = 0; k < 4; k++) {
+						q[k] = lo;
+						q[k][a] += side * s;
+						q[k][u] += (k == 1 || k == 2) * s;
+						q[k][w] += (k >= 2) * s;
+					}
+					const bool f = flip != (side == 1);
+					for (int t : {0, 1, 2, 0, 2, 3}) tris.push_back(q[f ? 3 - t : t]);
+				}
+		};
+		cube({10.2f, 10.1f, 10.3f}, 6, false);
+		cube({13.2f, 13.1f, 13.3f}, 6, false);
+		cube({22.2f, 10.1f, 22.3f}, 6, true);
+		SdfGrid g = voxelize_triangles(tris, 0.5f);
+		CHECK(g.sample({14.5f, 14.5f, 14.5f}) < -0.9f && g.sample({11, 11, 11}) < -0.3f && g.sample({18, 11, 11}) > 0.9f && g.sample({25, 13, 25}) < -0.9f, "inside/outside");
+		CHECK(std::fabs(g.sample({10.2f, 12, 12})) < 0.05f, "face distance %.3f", g.sample({10.2f, 12, 12}));
+		Volume v(4, 4, 4, 0.5f);
+		const float h[3] = {g.n[0] * 0.25f, g.n[1] * 0.25f, g.n[2] * 0.25f};
+		v.edit(MESH, BUILD, {g.origin[0] + h[0], g.origin[1] + h[1], g.origin[2] + h[2]}, {h[0], h[1], h[2]}, ID, 3, 0, 1, false, &g);
+		Soup a = mesh_all(v, lod0);
+		printf("  cubes: %ld tris, volume %.1f (exact 621.0)\n", a.tris, a.volume);
+		CHECK(a.open_edges == 0 && std::fabs(a.volume - 621) < 621 * 0.03, "open %ld volume %.1f", a.open_edges, a.volume);
+	}
+
+	printf("skirts\n");
+	{ // a closed surface inside one chunk gets none; a sphere cut by chunk borders gets a strip on each cut edge
+		Volume v(2, 2, 2, 0.5f);
+		v.edit(SPHERE, BUILD, {4, 4, 4}, {2.5f, 0, 0}, ID, 3, 0, 1, false); // inside chunk (0,0,0): 0..8 m
+		MeshData m;
+		v.mesh_chunk(0, 0, 0, 0, m);
+		size_t ni = m.idx.size();
+		add_skirts(m, 1.0f);
+		CHECK(ni > 0 && m.idx.size() == ni && m.skirt_from == ni, "closed mesh got skirts: %zu -> %zu", ni, m.idx.size());
+		v.edit(SPHERE, BUILD, {8, 8, 8}, {3, 0, 0}, ID, 3, 0, 1, false); // straddles all 8 chunks
+		v.mesh_chunk(0, 0, 0, 0, m);
+		ni = m.idx.size();
+		add_skirts(m, 1.0f);
+		CHECK(m.skirt_from == ni && m.idx.size() > ni && (m.idx.size() - ni) % 6 == 0, "cut mesh: %zu tris, %zu skirt", ni / 3, (m.idx.size() - ni) / 3);
+		CHECK(m.pos.size() / 3 == m.nrm.size() / 3 && m.col.size() == m.pos.size() / 3 * 4, "skirt vertex arrays disagree");
 	}
 
 	printf(failures ? "FAILED (%d)\n" : "ALL CORE TESTS PASSED\n", failures);

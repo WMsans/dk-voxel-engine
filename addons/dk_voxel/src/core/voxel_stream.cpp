@@ -94,7 +94,12 @@ void worker(WorldState &st) {
 		}
 		auto t0 = std::chrono::steady_clock::now();
 		const dkv::ChunkKey &key = r.job.key;
-		if (r.job.is_gen) { // endless: the edited chunk we kept in memory, else the chunk's save file, else generate it
+		if (r.job.level > 0) { // far field: generator only, never saved
+			Volume &fv = *st.far[r.job.level - 1].vol;
+			if (r.job.is_gen) fv.fill_chunk(key.x, key.y, key.z, st.active_generator.get());
+			r.has = r.job.is_gen || fv.mesh_chunk(key.x, key.y, key.z, r.job.lod, r.mesh);
+			if (!r.job.is_gen && r.has) add_skirts(r.mesh, 2.0f * fv.cell); // meets a level twice as coarse
+		} else if (r.job.is_gen) { // endless: the edited chunk we kept in memory, else the chunk's save file, else generate it
 			std::vector<uint8_t> raw;
 			bool restored = false;
 			if (!r.job.stored.is_empty()) {
@@ -107,6 +112,7 @@ void worker(WorldState &st) {
 			r.has = true;
 		} else {
 			r.has = st.vol->mesh_chunk(key.x, key.y, key.z, r.job.lod, r.mesh);
+			if (r.has && r.job.skirts) add_skirts(r.mesh, 2.0f * st.vol->cell); // where the near field meets level 1
 		}
 		r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		std::lock_guard lk(st.qm);
@@ -119,6 +125,7 @@ void stream_endless(WorldState &st) {
 	const float cs = dkv::CHUNK * st.vol->cell;
 	const float margin = cs;
 	std::vector<dkv::WorldState::Job> gen;
+	std::vector<dkv::ChunkKey> gone;
 
 	for (int i = (int)st.chunks.size() - 1; i >= 0; i--) {
 		dkv::WorldState::Chunk &c = st.chunks[i];
@@ -134,16 +141,19 @@ void stream_endless(WorldState &st) {
 			}
 		}
 		if (wanted) continue;
-		store_chunk(st, c.key);
-		st.vol->remove_chunk(c.key.x, c.key.y, c.key.z);
+		const dkv::ChunkKey key = c.key;
+		store_chunk(st, key);
+		gone.push_back(key);
 		free_chunk(st, c);
-		st.chunk_lookup.erase(c.key);
+		st.chunk_lookup.erase(key);
 		if (i < (int)st.chunks.size() - 1) { // swap-remove; queued jobs carry a stale index and re-find by key
 			st.chunks[i] = std::move(st.chunks.back());
 			st.chunk_lookup[st.chunks[i].key] = i;
 		}
 		st.chunks.pop_back();
+		chunk_changed(st, 0, key);
 	}
+	st.vol->remove_chunks(gone);
 
 	for (const dkv::WorldState::Viewer &v : st.active_viewers) {
 		const float rh = v.view_distance + margin, rv = v.vertical_view_distance + margin, rh2 = rh * rh;
@@ -204,7 +214,10 @@ void stream_endless(WorldState &st) {
 void scan(WorldState &st) {
 	const float cs = dkv::CHUNK * st.vol->cell, hyst = cs * 0.5f;
 
-	if (!st.vol->bounded && st.need_stream) stream_endless(st);
+	if (!st.vol->bounded && st.need_stream) {
+		stream_endless(st);
+		st.need_far = true;
+	}
 	st.need_stream = false;
 
 	std::vector<dkv::WorldState::Job> add;
@@ -237,8 +250,9 @@ void scan(WorldState &st) {
 			want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
 		}
 		if (!want_coll && c.body.is_valid()) free_chunk(st, c, true);
+		const bool skirts = in_mesh ? dkv::near_skirts(st, c.key) : c.skirts;
 		bool stale = c.applied_version != c.version;
-		if (!stale && c.lod == want && (c.collision || !want_coll)) continue;
+		if (!stale && c.lod == want && c.skirts == skirts && (c.collision || !want_coll)) continue;
 		if (c.queued && c.queued_version == c.version) continue;
 		// Last: 27 locked lookups, so only for the few chunks that would queue a job, never all loaded ones.
 		if (!st.vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
@@ -252,6 +266,7 @@ void scan(WorldState &st) {
 		j.index = i;
 		j.lod = (int8_t)want;
 		j.collision = want_coll;
+		j.skirts = skirts;
 		j.urgent = urgent;
 		j.version = c.version;
 		add.push_back(std::move(j));

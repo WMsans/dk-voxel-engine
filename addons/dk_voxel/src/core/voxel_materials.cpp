@@ -2,6 +2,7 @@
 #include "voxel_materials.h"
 
 #include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/texture2d_array.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -16,25 +17,13 @@ using namespace godot;
 namespace {
 
 // Every layer of a Texture2DArray shares one size and format.
-constexpr int TEXTURE_ARRAY_SIZE = 256;
+constexpr int TEXTURE_ARRAY_SIZE = 1024;
 
-// A near-white grain, so a material with no textures keeps the demo's speckled look. The shader's tint ramp
-// turns its luminance into the two-colour pattern.
-Ref<Image> grain_image() {
-	Ref<Image> img = Image::create(64, 64, false, Image::FORMAT_RGBA8);
-	uint32_t h = 0x9e3779b9u;
-	for (int y = 0; y < 64; y++)
-		for (int x = 0; x < 64; x++) {
-			h = h * 1664525u + 1013904223u;
-			const float t = 0.55f + 0.45f * (float)((h >> 16) & 0xff) / 255.0f;
-			img->set_pixel(x, y, Color(t, t, t));
-		}
-	return img;
-}
-
-Ref<Image> flat_normal_image() {
+// The layer a material with no texture gets: a flat colour, sized like the array so packing does not resize
+// it. A Texture2DArray needs a value in every slot; nothing here draws a pattern.
+Ref<Image> flat_image(const Color &color) {
 	Ref<Image> img = Image::create(TEXTURE_ARRAY_SIZE, TEXTURE_ARRAY_SIZE, false, Image::FORMAT_RGBA8);
-	img->fill(Color(0.5f, 0.5f, 1.0f));
+	img->fill(color);
 	return img;
 }
 
@@ -52,12 +41,12 @@ Ref<Image> layer_image(const Ref<Texture2D> &tex, const Ref<Image> &fallback) {
 	return src;
 }
 
-// Cheap identity of the set's textures, so a colour-only change does not rebuild two arrays.
+// Cheap identity of the set's textures, so a colour-only change does not rebuild four arrays.
 uint64_t texture_fingerprint(const Ref<VoxelMaterialSet> &set) {
 	uint64_t h = 1469598103934665603ull;
 	for (int i = 0; i < dkv::MATERIAL_SLOTS; i++) {
 		Ref<VoxelMaterialDef> def = dkv::material_def(set, i);
-		Ref<Texture2D> texs[2] = {def->get_albedo(), def->get_normal()};
+		Ref<Texture2D> texs[4] = {def->get_albedo(), def->get_normal(), def->get_roughness_map(), def->get_ao_map()};
 		for (const Ref<Texture2D> &tex : texs) {
 			const int64_t id = tex.is_valid() ? (int64_t)tex->get_instance_id() : 0;
 			h = (h ^ (uint64_t)id) * 1099511628211ull;
@@ -77,16 +66,26 @@ Ref<VoxelMaterialDef> dkv::material_def(const Ref<VoxelMaterialSet> &set, int id
 	return m;
 }
 
-void dkv::apply_hardness(WorldState &st) {
+void dkv::apply_material_rules(WorldState &st) {
 	if (!st.vol) return;
+	st.vol->expose_inner = st.expose_inner_material;
 	memset(st.vol->hardness, 0, sizeof(st.vol->hardness));
+	for (int i = 0; i < 256; i++) st.vol->inner[i] = (uint8_t)i;
 	if (!st.material_set.is_valid() || st.material_set->get_materials().is_empty()) return;
-	for (int i = 0; i < 256; i++) st.vol->hardness[i] = (uint8_t)material_def(st.material_set, i)->get_hardness();
+	for (int i = 0; i < 256; i++) {
+		Ref<VoxelMaterialDef> def = material_def(st.material_set, i);
+		st.vol->hardness[i] = (uint8_t)def->get_hardness();
+		if (def->get_inner_material() >= 0) st.vol->inner[i] = (uint8_t)def->get_inner_material();
+	}
 }
 
 void dkv::apply_material_set(WorldState &st) {
 	ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(st.material.ptr());
 	if (!sm) return;
+	// Everything goes straight to the RenderingServer, never through set_shader_parameter: these are derived from the
+	// material set, and as ShaderMaterial properties they would be saved (megabytes of texture arrays) with the material.
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const RID rid = sm->get_rid();
 
 	// Colours and parameters describe every slot and are cheap: always push them.
 	PackedColorArray ca, cb;
@@ -97,32 +96,39 @@ void dkv::apply_material_set(WorldState &st) {
 		cb.push_back(m->get_color_b());
 		params.push_back(Vector4(m->get_pattern_scale(), m->get_roughness(), m->get_metallic(), m->get_emission()));
 	}
-	sm->set_shader_parameter("color_a", ca);
-	sm->set_shader_parameter("color_b", cb);
-	sm->set_shader_parameter("params", params);
+	rs->material_set_param(rid, "color_a", ca);
+	rs->material_set_param(rid, "color_b", cb);
+	rs->material_set_param(rid, "params", params);
 
 	const TypedArray<VoxelMaterialDef> mats = st.material_set.is_valid() ? st.material_set->get_materials() : TypedArray<VoxelMaterialDef>();
 	if (mats.size() > MATERIAL_SLOTS)
 		UtilityFunctions::push_error("VoxelWorld: material set has " + String::num_int64(mats.size()) + " entries but the shader has " +
 				String::num_int64(MATERIAL_SLOTS) + " slots; the extra entries are ignored");
 
+	static const char *uniforms[4] = { "albedo_tex", "normal_tex", "roughness_tex", "ao_tex" };
 	const uint64_t fingerprint = texture_fingerprint(st.material_set);
-	if (fingerprint == st.material_fingerprint && sm->get_shader_parameter("albedo_tex").get_type() == Variant::OBJECT) return;
-	st.material_fingerprint = fingerprint;
-
-	const Ref<Image> grain = grain_image(), flat = flat_normal_image();
-	TypedArray<Ref<Image>> albedo_layers, normal_layers;
-	for (int i = 0; i < MATERIAL_SLOTS; i++) {
-		Ref<VoxelMaterialDef> m = material_def(st.material_set, i);
-		albedo_layers.push_back(layer_image(m->get_albedo(), grain));
-		normal_layers.push_back(layer_image(m->get_normal(), flat));
+	if (fingerprint != st.material_fingerprint || st.material_arrays[0].is_null()) {
+		st.material_fingerprint = fingerprint;
+		const Ref<Image> grey = flat_image(Color(0.5f, 0.5f, 0.5f)), flat = flat_image(Color(0.5f, 0.5f, 1.0f)),
+				one = flat_image(Color(1.0f, 1.0f, 1.0f));
+		// One Texture2DArray per texture kind, layer = material id.
+		auto pack = [&](int k, Ref<Texture2D> (VoxelMaterialDef::*get)() const, const Ref<Image> &fallback) {
+			TypedArray<Ref<Image>> layers;
+			for (int i = 0; i < MATERIAL_SLOTS; i++) layers.push_back(layer_image((material_def(st.material_set, i).ptr()->*get)(), fallback));
+			Ref<Texture2DArray> array;
+			array.instantiate();
+			if (array->create_from_images(layers) == OK) st.material_arrays[k] = array;
+		};
+		pack(0, &VoxelMaterialDef::get_albedo, grey);
+		pack(1, &VoxelMaterialDef::get_normal, flat);
+		pack(2, &VoxelMaterialDef::get_roughness_map, one);
+		pack(3, &VoxelMaterialDef::get_ao_map, one);
+	} else if (rid == st.material_pushed) {
+		return;
 	}
-	Ref<Texture2DArray> albedo;
-	albedo.instantiate();
-	Ref<Texture2DArray> normal;
-	normal.instantiate();
-	if (albedo->create_from_images(albedo_layers) == OK) sm->set_shader_parameter("albedo_tex", albedo);
-	if (normal->create_from_images(normal_layers) == OK) sm->set_shader_parameter("normal_tex", normal);
+	st.material_pushed = rid;
+	for (int k = 0; k < 4; k++)
+		if (st.material_arrays[k].is_valid()) rs->material_set_param(rid, uniforms[k], st.material_arrays[k]->get_rid());
 }
 
 void VoxelMaterialDef::_bind_methods() {
@@ -150,12 +156,21 @@ void VoxelMaterialDef::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_hardness", "v"), &VoxelMaterialDef::set_hardness);
 	ClassDB::bind_method(D_METHOD("get_hardness"), &VoxelMaterialDef::get_hardness);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "hardness"), "set_hardness", "get_hardness");
+	ClassDB::bind_method(D_METHOD("set_inner_material", "v"), &VoxelMaterialDef::set_inner_material);
+	ClassDB::bind_method(D_METHOD("get_inner_material"), &VoxelMaterialDef::get_inner_material);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "inner_material", PROPERTY_HINT_RANGE, "-1,255"), "set_inner_material", "get_inner_material");
 	ClassDB::bind_method(D_METHOD("set_albedo", "v"), &VoxelMaterialDef::set_albedo);
 	ClassDB::bind_method(D_METHOD("get_albedo"), &VoxelMaterialDef::get_albedo);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "albedo", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_albedo", "get_albedo");
 	ClassDB::bind_method(D_METHOD("set_normal", "v"), &VoxelMaterialDef::set_normal);
 	ClassDB::bind_method(D_METHOD("get_normal"), &VoxelMaterialDef::get_normal);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "normal", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_normal", "get_normal");
+	ClassDB::bind_method(D_METHOD("set_roughness_map", "v"), &VoxelMaterialDef::set_roughness_map);
+	ClassDB::bind_method(D_METHOD("get_roughness_map"), &VoxelMaterialDef::get_roughness_map);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "roughness_map", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_roughness_map", "get_roughness_map");
+	ClassDB::bind_method(D_METHOD("set_ao_map", "v"), &VoxelMaterialDef::set_ao_map);
+	ClassDB::bind_method(D_METHOD("get_ao_map"), &VoxelMaterialDef::get_ao_map);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "ao_map", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_ao_map", "get_ao_map");
 }
 
 void VoxelMaterialSet::set_materials(const TypedArray<VoxelMaterialDef> &p_materials) {
