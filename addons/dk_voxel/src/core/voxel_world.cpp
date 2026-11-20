@@ -72,10 +72,12 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 		return;
 	}
 	if (r.job.is_gen) {
-		if (dkv::WorldState::Chunk *c = find_chunk(r.job.key.x, r.job.key.y, r.job.key.z)) c->gen_queued = false;
+		if (dkv::WorldState::Chunk *c = find_chunk(r.job.key.x, r.job.key.y, r.job.key.z)) {
+			c->gen_queued = false;
+			dkv::generated_changed(*st, r.job.key, +1); // may complete its own or a neighbour's 3x3x3 block
+		}
 		// A restored chunk keeps its store entry: it is the authoritative copy until an edit overwrites it.
 		if (r.has && r.job.stored.is_empty()) st->store.erase(r.job.key);
-		st->need_scan = true; // a new chunk may complete a neighbour's 26
 		return;
 	}
 	dkv::WorldState::Chunk *cp = (r.job.index >= 0 && r.job.index < (int)st->chunks.size() && st->chunks[r.job.index].key == r.job.key)
@@ -84,7 +86,7 @@ void VoxelWorld::apply(dkv::WorldState::Result &r) {
 	if (!cp) return; // unloaded while the job ran
 	dkv::WorldState::Chunk &c = *cp;
 	if (r.job.version == c.queued_version) c.queued = false;
-	if (r.job.version != c.version) st->need_scan = true; // edited again meanwhile
+	if (r.job.version != c.version) st->rescan.push_back(c.key); // edited again meanwhile
 	if (r.job.version < c.applied_version || !is_inside_tree()) return;
 	st->stat_ms += r.ms;
 	st->stat_jobs++;
@@ -230,6 +232,7 @@ void VoxelWorld::_notification(int what) {
 			c.applied_version = 0;
 		}
 		dkv::free_far(*st); // restreamed on re-entry
+		dkv::free_mesh_pool(*st); // its instances live in that world's scenario
 		st->need_scan = st->need_stream = true;
 	}
 }
@@ -243,6 +246,7 @@ VoxelWorld::~VoxelWorld() {
 	dkv::stop_workers(*st);
 	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
 	dkv::free_far(*st);
+	dkv::free_mesh_pool(*st);
 }
 
 Error VoxelWorld::save() { return dkv::save_world(*st); }
@@ -259,11 +263,14 @@ void VoxelWorld::reset() {
 	}
 	for (dkv::WorldState::Chunk &c : st->chunks) free_chunk(*st, c);
 	dkv::free_far(*st);
+	dkv::free_mesh_pool(*st);
 	st->far.clear();
 	st->chunks.clear();
 	st->chunk_lookup.clear();
+	st->coll_queue.clear();
 	st->vol.reset();
 	st->active_viewers.clear();
+	st->streamed_viewers.clear();
 	ensure_volume();
 	dkv::start_workers(*st);
 }
@@ -271,7 +278,7 @@ void VoxelWorld::reset() {
 void VoxelWorld::_process(double) {
 	if (!st->vol || st->workers.empty()) return;
 	dkv::update_viewers(*st, *this);
-	if (st->need_scan) dkv::scan(*st);
+	dkv::scan(*st, 1000); // targeted rescans in full, then 1 ms of the pass over every chunk
 	if (st->need_far) st->need_far = dkv::stream_far(*st);
 	std::vector<dkv::WorldState::Result> rs;
 	{
@@ -282,7 +289,9 @@ void VoxelWorld::_process(double) {
 		if (r.job.urgent) apply(r); // edits show up the frame they finish
 		else st->pending.push_back(std::move(r));
 	}
+	// Main-thread budget after the edits' meshes: 2 ms of collision shapes, nearest first, then streaming up to 4 ms.
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
+	if (is_inside_tree()) dkv::build_collisions(*st, *this, t0, 2000);
 	while (!st->pending.empty() && Time::get_singleton()->get_ticks_usec() - t0 < 4000) { // streaming: 4 ms a frame
 		apply(st->pending.front());
 		st->pending.pop_front();
@@ -345,7 +354,7 @@ float VoxelWorld::get_density(Vector3 p) {
 bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
 	ensure_volume();
 	if (!st->vol || st->workers.empty() || st->active_viewers.empty()) return false;
-	if (st->need_scan) dkv::scan(*st);
+	if (st->need_scan || st->scan_left || !st->rescan.empty()) dkv::scan(*st); // finish the pass: a query wants it exact
 	Transform3D inv = gx().affine_inverse();
 	// The world node may be rotated: transform all 8 corners, as do_edit() does for terrain_edited.
 	Vector3 lmin(1e20f, 1e20f, 1e20f), lmax(-1e20f, -1e20f, -1e20f);
@@ -368,7 +377,6 @@ bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
 	for (int z = cmin[2]; z <= cmax[2]; z++)
 		for (int y = cmin[1]; y <= cmax[1]; y++)
 			for (int x = cmin[0]; x <= cmax[0]; x++) {
-				if (!st->vol->has_chunk(x, y, z)) return false;
 				dkv::WorldState::Chunk *c = find_chunk(x, y, z);
 				if (!c || c->gen_queued || c->queued || c->applied_version != c->version || c->lod < 0) return false;
 				Vector3 center = c->offset + Vector3(0.5, 0.5, 0.5) * cs;
@@ -380,7 +388,7 @@ bool VoxelWorld::is_area_ready(const AABB &aabb, bool need_collision) {
 				int lo = st->lod_at(d - hyst), hi = st->lod_at(d + hyst);
 				int want = (c->lod == lo || c->lod == hi) ? c->lod : lo;
 				if (c->lod != want) return false;
-				if (need_collision && c->tris > 0 && (!c->collision || !c->body.is_valid())) return false;
+				if (need_collision && c->tris > 0 && (!c->collision || c->coll_dirty || !c->body.is_valid())) return false;
 			}
 	return true;
 }
@@ -388,8 +396,11 @@ void VoxelWorld::set_lod_error(int lod, float e) {
 	if (st->vol && lod >= 1 && lod <= 2) st->vol->lod_error[lod] = e;
 }
 int VoxelWorld::get_pending_count() {
+	int colls = 0; // collision shapes still to build
+	for (const dkv::ChunkKey &key : st->coll_queue)
+		if (dkv::WorldState::Chunk *c = find_chunk(key.x, key.y, key.z)) colls += c->coll_dirty;
 	std::lock_guard lk(st->qm);
-	return (int)(st->jobs.size() + st->results.size() + st->pending.size());
+	return (int)(st->jobs.size() + st->results.size() + st->pending.size()) + colls;
 }
 Dictionary VoxelWorld::get_stats() {
 	Dictionary d;

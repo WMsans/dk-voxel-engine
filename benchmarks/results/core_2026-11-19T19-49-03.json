@@ -1,0 +1,198 @@
+{
+  "system": {
+    "godot": "4.7.2-stable (arch_linux)",
+    "os": "Linux #1 SMP PREEMPT_DYNAMIC Tue, 03 Nov 2026 12:37:21 +0000",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "cores": 20,
+    "gpu": "",
+    "gpu_vendor": "",
+    "renderer": "forward_plus",
+    "display": "headless",
+    "debug_build": true,
+    "date": "2026-11-19T19:49:03"
+  },
+  "results": {
+    "generate threads=1": {
+      "total_ms": 2344.943,
+      "idle_frame_ms": 0.00591666666666697,
+      "chunks": 2048,
+      "meshes": 773,
+      "triangles": 620542,
+      "bodies": 7,
+      "mesh_ms_per_job": 0.253075774792379,
+      "chunks_per_s": 873.368776980933
+    },
+    "generate threads=2": {
+      "total_ms": 1197.828,
+      "idle_frame_ms": 0.00633333333332757,
+      "chunks": 2048,
+      "meshes": 772,
+      "triangles": 619338,
+      "bodies": 7,
+      "mesh_ms_per_job": 0.260376369501466,
+      "chunks_per_s": 1709.76133468244
+    },
+    "generate threads=4": {
+      "total_ms": 636.981,
+      "idle_frame_ms": 0.00716666666666394,
+      "chunks": 2048,
+      "meshes": 770,
+      "triangles": 617884,
+      "bodies": 7,
+      "mesh_ms_per_job": 0.313301495596869,
+      "chunks_per_s": 3215.16654342908
+    },
+    "generate threads=8": {
+      "total_ms": 351.691,
+      "idle_frame_ms": 0.008158333333328,
+      "chunks": 2048,
+      "meshes": 766,
+      "triangles": 614604,
+      "bodies": 7,
+      "mesh_ms_per_job": 0.298664792156863,
+      "chunks_per_s": 5823.29374365566
+    },
+    "generate threads=default(18)": {
+      "total_ms": 232.038,
+      "idle_frame_ms": 0.00586666666667194,
+      "chunks": 2048,
+      "meshes": 774,
+      "triangles": 621754,
+      "bodies": 7,
+      "mesh_ms_per_job": 0.369543167480469,
+      "chunks_per_s": 8826.14054594504
+    },
+    "level load": {
+      "total_ms": 97.9949999999999,
+      "size_m": "(73.0, 30.5, 69.0)",
+      "chunks": 360,
+      "meshes": 139,
+      "triangles": 81296,
+      "mesh_ms_per_job": 0.313983477777778
+    },
+    "endless load far_levels=0": {
+      "spawn_ready_ms": 405.884,
+      "total_ms": 3454.252,
+      "idle_frame_ms": 0.00866666666667394,
+      "chunks": 36296,
+      "far_chunks": 0,
+      "meshes": 3411,
+      "triangles": 1650002,
+      "bodies": 124
+    },
+    "endless load far_levels=6": {
+      "spawn_ready_ms": 407.671,
+      "total_ms": 5418.894,
+      "idle_frame_ms": 0.00994999999999588,
+      "chunks": 36296,
+      "far_chunks": 18048,
+      "meshes": 5320,
+      "triangles": 4078242,
+      "bodies": 124
+    },
+    "endless fly 10 m/s": {
+      "frames": 720,
+      "frame_avg_ms": 3.5956625,
+      "frame_p50_ms": 0.0169999999998254,
+      "frame_p99_ms": 28.857,
+      "frame_max_ms": 38.5169999999998,
+      "frames_over_16.7ms": 33,
+      "max_pending": 4273,
+      "drain_after_ms": 0.0289999999986321,
+      "area_ready_at_end": true
+    },
+    "endless fly 30 m/s": {
+      "frames": 720,
+      "frame_avg_ms": 13.4491652777778,
+      "frame_p50_ms": 14.6169999999984,
+      "frame_p99_ms": 38.0169999999998,
+      "frame_max_ms": 45.5620000000017,
+      "frames_over_16.7ms": 203,
+      "max_pending": 19322,
+      "drain_after_ms": 944.220999999998,
+      "area_ready_at_end": true
+    },
+    "endless fly 100 m/s": {
+      "frames": 720,
+      "frame_avg_ms": 13.2697402777778,
+      "frame_p50_ms": 11.1569999999992,
+      "frame_p99_ms": 38.2770000000019,
+      "frame_max_ms": 48.3729999999996,
+      "frames_over_16.7ms": 169,
+      "max_pending": 124766,
+      "drain_after_ms": 14292.821,
+      "area_ready_at_end": true
+    },
+    "dig_sphere r=1.6": {
+      "n": 60,
+      "call_avg_ms": 0.253900000000188,
+      "call_p95_ms": 0.39100000000326,
+      "remesh_latency_avg_ms": 1.23559999999925,
+      "remesh_latency_p95_ms": 2.69100000000617,
+      "batch_drain_ms": 23.948000000004
+    },
+    "dig_sphere r=4": {
+      "n": 60,
+      "call_avg_ms": 1.46061666666671,
+      "call_p95_ms": 2.28300000001036,
+      "remesh_latency_avg_ms": 4.05054999999993,
+      "remesh_latency_p95_ms": 7.58400000000256,
+      "batch_drain_ms": 40.4870000000083
+    },
+    "dig_sphere r=8": {
+      "n": 60,
+      "call_avg_ms": 5.54901666666628,
+      "call_p95_ms": 8.66999999999825,
+      "remesh_latency_avg_ms": 10.5520499999999,
+      "remesh_latency_p95_ms": 15.9879999999976,
+      "batch_drain_ms": 51.2309999999998
+    },
+    "build_sphere r=1.6": {
+      "n": 60,
+      "call_avg_ms": 0.270766666666411,
+      "call_p95_ms": 0.414999999993597,
+      "remesh_latency_avg_ms": 1.74809999999998,
+      "remesh_latency_p95_ms": 4.55100000000675,
+      "batch_drain_ms": 36.0299999999988
+    },
+    "smooth_sphere r=2.4": {
+      "n": 60,
+      "call_avg_ms": 0.638066666667631,
+      "call_p95_ms": 0.881999999997788,
+      "remesh_latency_avg_ms": 2.45050000000047,
+      "remesh_latency_p95_ms": 6.57200000000012,
+      "batch_drain_ms": 34.0780000000086
+    },
+    "build_box 2x2x2 sharp": {
+      "n": 60,
+      "call_avg_ms": 0.364416666666754,
+      "call_p95_ms": 0.44999999999709,
+      "remesh_latency_avg_ms": 1.71529999999912,
+      "remesh_latency_p95_ms": 4.18600000000151,
+      "batch_drain_ms": 36.1549999999988
+    },
+    "dig_cylinder r=1.4 sharp": {
+      "n": 60,
+      "call_avg_ms": 0.467000000000068,
+      "call_p95_ms": 0.642000000007101,
+      "remesh_latency_avg_ms": 2.17149999999965,
+      "remesh_latency_p95_ms": 5.43899999999849,
+      "batch_drain_ms": 30.2869999999966
+    },
+    "raycast 64 m": {
+      "n": 20000,
+      "us_per_ray": 31.7218000000001,
+      "hit_ratio": 0.45595
+    },
+    "get_density": {
+      "n": 200000,
+      "us_per_call": 0.359910000000018
+    },
+    "build_mesh (glb tree)": {
+      "trees": 5,
+      "avg_ms": 86.9518000000011,
+      "max_ms": 120.902000000002,
+      "remesh_drain_ms": 32.1410000000033
+    }
+  }
+}

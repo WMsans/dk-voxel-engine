@@ -89,6 +89,11 @@ func _spawn(token: int) -> void:
 	await VoxelUtil.wait_ready(world, AABB(at + Vector3(-32, 0, -32), Vector3(64, 64, 64)), false) # ground and ruins
 	if token != spawn_token:
 		return
+	var bomb := tools.bomb_scene.instantiate()
+	await VoxelUtil.prewarm(player.cam, debris.warm_pairs() + [[(bomb.get_node("Mesh") as MeshInstance3D).mesh, null]])
+	bomb.free()
+	if token != spawn_token:
+		return
 	player.position = VoxelUtil.ground(world, at) + Vector3.UP * 3.0
 	player.velocity = Vector3.ZERO
 	if profile == "procedural":

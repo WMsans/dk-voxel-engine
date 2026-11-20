@@ -1,0 +1,288 @@
+{
+  "system": {
+    "godot": "4.7.2-stable (official)",
+    "os": "macOS 26.4.1",
+    "cpu": "Apple M1",
+    "cores": 8,
+    "gpu": "Apple M1 (Apple7)",
+    "gpu_vendor": "Apple",
+    "renderer": "forward_plus",
+    "display": "macOS",
+    "debug_build": true,
+    "date": "2026-11-20T13:59:14"
+  },
+  "results": {
+    "level startup": {
+      "spawn_ms": 199.65,
+      "player_active": true
+    },
+    "level view0 full": {
+      "fps_avg": 114.766816781663,
+      "frame_p50_ms": 8.72000000000025,
+      "frame_p99_ms": 10.9430000000002,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.28072333236535,
+      "triangles": 78932,
+      "render_scale": 1.0,
+      "draw_calls": 403,
+      "primitives": 242296
+    },
+    "level view0 no_post": {
+      "fps_avg": 120.075215114748,
+      "frame_p50_ms": 8.28600000000006,
+      "frame_p99_ms": 12.2709999999997,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.18562666515509,
+      "triangles": 78932,
+      "render_scale": 1.0,
+      "draw_calls": 403,
+      "primitives": 242296
+    },
+    "level view0 minimal": {
+      "fps_avg": 119.905706152682,
+      "frame_p50_ms": 8.82700000000114,
+      "frame_p99_ms": 12.378999999999,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 0.849976665029923,
+      "triangles": 78932,
+      "render_scale": 1.0,
+      "draw_calls": 157,
+      "primitives": 88024
+    },
+    "level view1 full": {
+      "fps_avg": 78.5898672512356,
+      "frame_p50_ms": 12.7430000000004,
+      "frame_p99_ms": 14.6939999999995,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.6944833312432,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 568,
+      "primitives": 379260
+    },
+    "level view1 no_post": {
+      "fps_avg": 101.691778321415,
+      "frame_p50_ms": 9.92400000000089,
+      "frame_p99_ms": 11.7839999999997,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.28940666715304,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 568,
+      "primitives": 379264
+    },
+    "level view1 minimal": {
+      "fps_avg": 119.568024640579,
+      "frame_p50_ms": 8.36100000000079,
+      "frame_p99_ms": 12.2980000000025,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 0.809620001514753,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 130,
+      "primitives": 82304
+    },
+    "level view2 full": {
+      "fps_avg": 98.5765869433996,
+      "frame_p50_ms": 10.2109999999993,
+      "frame_p99_ms": 11.75,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.2936099995176,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 389,
+      "primitives": 255960
+    },
+    "level view2 no_post": {
+      "fps_avg": 119.844250412164,
+      "frame_p50_ms": 8.42000000000189,
+      "frame_p99_ms": 10.2239999999983,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.11055000017087,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 389,
+      "primitives": 255964
+    },
+    "level view2 minimal": {
+      "fps_avg": 119.901632700533,
+      "frame_p50_ms": 8.35800000000017,
+      "frame_p99_ms": 12.8979999999974,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 0.900853334069252,
+      "triangles": 88156,
+      "render_scale": 1.0,
+      "draw_calls": 135,
+      "primitives": 83932
+    },
+    "level orbit": {
+      "frames": 600,
+      "fps_avg": 110.228183362379,
+      "frame_p50_ms": 9.07099999999991,
+      "frame_p95_ms": 10.398000000001,
+      "frame_p99_ms": 11.2030000000013,
+      "frame_max_ms": 13.7070000000022,
+      "triangles": 88156,
+      "meshes": 149,
+      "render_scale": 1.0
+    },
+    "level play walk+dig": {
+      "frames": 811,
+      "fps_avg": 81.0401518478604,
+      "frame_p50_ms": 12.8839999999982,
+      "frame_p99_ms": 15.8039999999964,
+      "frame_max_ms": 17.8479999999981,
+      "frames_over_16.7ms": 3,
+      "triangles": 95420,
+      "bodies": 149,
+      "render_scale": 1.0
+    },
+    "level play fly": {
+      "frames": 1147,
+      "fps_avg": 114.576177524949,
+      "frame_p50_ms": 8.32900000000518,
+      "frame_p99_ms": 14.4419999999955,
+      "frame_max_ms": 17.8999999999942,
+      "frames_over_16.7ms": 1,
+      "triangles": 49438,
+      "bodies": 0,
+      "render_scale": 1.0
+    },
+    "procedural startup": {
+      "spawn_ms": 546.306000000004,
+      "player_active": true
+    },
+    "procedural view0 full": {
+      "fps_avg": 66.969502758139,
+      "frame_p50_ms": 14.9409999999989,
+      "frame_p99_ms": 15.625,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 3.0704366628329,
+      "triangles": 3229250,
+      "render_scale": 0.749999940395355,
+      "draw_calls": 5840,
+      "primitives": 3977436
+    },
+    "procedural view0 no_post": {
+      "fps_avg": 69.0085087491286,
+      "frame_p50_ms": 14.4400000000023,
+      "frame_p99_ms": 16.031999999992,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 3.03854666630427,
+      "triangles": 3229250,
+      "render_scale": 0.899999976158142,
+      "draw_calls": 5841,
+      "primitives": 3977628
+    },
+    "procedural view0 minimal": {
+      "fps_avg": 97.0150725850604,
+      "frame_p50_ms": 10.2700000000041,
+      "frame_p99_ms": 11.400999999998,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.84969999710719,
+      "triangles": 3229250,
+      "render_scale": 0.949999988079071,
+      "draw_calls": 1704,
+      "primitives": 1187324
+    },
+    "procedural view1 full": {
+      "fps_avg": 67.976405842708,
+      "frame_p50_ms": 14.7280000000028,
+      "frame_p99_ms": 15.4799999999959,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 2.62799332936605,
+      "triangles": 3267350,
+      "render_scale": 0.849999964237213,
+      "draw_calls": 3286,
+      "primitives": 2208316
+    },
+    "procedural view1 no_post": {
+      "fps_avg": 78.0921768819043,
+      "frame_p50_ms": 12.7660000000033,
+      "frame_p99_ms": 14.2219999999943,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 2.37228333155314,
+      "triangles": 3267350,
+      "render_scale": 0.899999976158142,
+      "draw_calls": 3286,
+      "primitives": 2208316
+    },
+    "procedural view1 minimal": {
+      "fps_avg": 109.152351942112,
+      "frame_p50_ms": 9.1710000000021,
+      "frame_p99_ms": 9.88000000000466,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.82166333516439,
+      "triangles": 3267350,
+      "render_scale": 0.899999976158142,
+      "draw_calls": 1570,
+      "primitives": 1045824
+    },
+    "procedural view2 full": {
+      "fps_avg": 69.0420348620853,
+      "frame_p50_ms": 14.4619999999995,
+      "frame_p99_ms": 15.2970000000059,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 3.24931666692098,
+      "triangles": 3158716,
+      "render_scale": 0.749999940395355,
+      "draw_calls": 4412,
+      "primitives": 2695704
+    },
+    "procedural view2 no_post": {
+      "fps_avg": 75.4508565935749,
+      "frame_p50_ms": 13.2880000000005,
+      "frame_p99_ms": 14.6340000000055,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 3.22093332846959,
+      "triangles": 3158716,
+      "render_scale": 0.799999952316284,
+      "draw_calls": 4412,
+      "primitives": 2695704
+    },
+    "procedural view2 minimal": {
+      "fps_avg": 108.685728694336,
+      "frame_p50_ms": 9.19899999999325,
+      "frame_p99_ms": 9.97699999999895,
+      "gpu_ms": 0.0,
+      "render_cpu_ms": 1.95150000015895,
+      "triangles": 3158716,
+      "render_scale": 0.799999952316284,
+      "draw_calls": 1625,
+      "primitives": 1046172
+    },
+    "procedural orbit": {
+      "frames": 600,
+      "fps_avg": 72.7767432698493,
+      "frame_p50_ms": 13.650999999998,
+      "frame_p95_ms": 15.8739999999962,
+      "frame_p99_ms": 16.997000000003,
+      "frame_max_ms": 36.3469999999943,
+      "triangles": 3486078,
+      "meshes": 5813,
+      "render_scale": 0.699999988079071
+    },
+    "procedural play walk+dig": {
+      "frames": 748,
+      "fps_avg": 74.7705329329712,
+      "frame_p50_ms": 13.3580000000075,
+      "frame_p99_ms": 15.851999999999,
+      "frame_max_ms": 17.0390000000043,
+      "frames_over_16.7ms": 3,
+      "triangles": 3452768,
+      "bodies": 245,
+      "render_scale": 0.699999988079071
+    },
+    "procedural play fly": {
+      "frames": 865,
+      "fps_avg": 86.3898097976031,
+      "frame_p50_ms": 11.5280000000057,
+      "frame_p99_ms": 15.2899999999936,
+      "frame_max_ms": 24.0369999999966,
+      "frames_over_16.7ms": 6,
+      "triangles": 3349480,
+      "bodies": 119,
+      "render_scale": 0.699999988079071
+    }
+  }
+}

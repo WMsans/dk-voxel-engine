@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dfvp06fbhfguf"
+path="res://.godot/imported/cel_outline.glsl-a0cfe8a76b944272161c74a57d1ba48d.res"
+
+[deps]
+
+source_file="res://demo/cel/cel_outline.glsl"
+dest_files=["res://.godot/imported/cel_outline.glsl-a0cfe8a76b944272161c74a57d1ba48d.res"]
+
+[params]
+

@@ -15,14 +15,16 @@ The demo's scripts are separate pieces you can copy into a game one at a time. E
 `VoxelWorld` (or nothing) and is wired up in `demo/main.tscn` / `demo/main.gd`:
 `voxel_tools.gd` (dig/build/smooth/bomb tools, `dug` signal), `voxel_debris.gd` (fragments from an edit
 result), `bomb.gd` + `bomb.tscn`, `player.gd` (fly/walk body, no voxel code), `voxel_util.gd` (ground
-raycast, `wait_ready`, glb stamping), `beauty_shot.gd`, `cel/` (post-process passes). `main.gd` is the
+raycast, `wait_ready`, glb stamping, shader `prewarm`), `beauty_shot.gd`, `dynamic_resolution.gd` (render
+scale that holds 60 fps), `cel/` (`CelEffect`, the cel/outline/leaf compositor pass). `main.gd` is the
 demo game itself: profiles, spawning, gold, the ruins and trees.
 
 ## Using it
 
 One node, `VoxelWorld`; generators are `VoxelGenerator` resources. Set the properties, `add_child`,
 then `reset()`. Edits are main-thread calls; meshing runs on worker threads and edited chunks jump the
-queue.
+queue. An edit's new mesh shows the frame it is meshed; its collision shape follows within a few frames
+(see *Frame budget* below), and `is_area_ready(aabb, true)` waits for it.
 
 ```gdscript
 var world := VoxelWorld.new()
@@ -266,13 +268,43 @@ Ghidra) and the `Voxel/` asset tree. **Observed** means read directly from data 
 Still unknown: voxel bytes 4–7, the exact collapse penalties (constants 100 / 5000 / 10000 in the
 octree builder at `0x130a0`), and how seams between chunks of different LOD are closed.
 
+## Frame budget: how the game holds 60 fps, and what this engine took from it
+
+Target: 1080p at 60 fps, p99 frame time, while walking, digging, bombing and flying. Measured on an M1
+(roughly Switch 2 class) with `benchmarks/bench_render.gd`, whose `play` phase walks while digging at the
+tools' rate and bombing every 1.5 s, then sprints in fly mode.
+
+Evidence is from the same targets as above plus the shipped RSDB tables and the rodata strings of
+`exefs/main`. The runtime log of the PC port in the same folder describes the port's host layer, not the
+game, and is not used as evidence for the game.
+
+| Game technique | Evidence | Here |
+|---|---|---|
+| Display meshes come from fixed unit heaps sized per stage, never per-upload allocation. | Observed: `VoxelDisplayMeshUnitHeap`, `VoxelDisplayMeshAttrHeap`, `VoxelScene*UnitHeap` strings; `RSDB/VoxelHeapSize` rows per stage (e.g. ForestLevelStage heap 2000, octree 420, Hermite 340, raw 410). | Chunk meshes and instances are pooled by capacity and rewritten in place (`mesh_surface_update_*_region`); `mesh_add_surface_from_arrays` used to stall 1–8 ms at random. |
+| Mesh building and edit writing run on their own threads (`VoxelDisplayMeshUpdater%d`, `VoxelGridWriterThread%d`, `VOXEL_DependencyWorker`). | Observed: thread names. | Workers run at low priority (macOS QoS utility): at default priority six of them took cores from the main and render threads and caused most streaming hitches. |
+| Per-frame work is capped (`MaxModelClusterOpCellsPerFrame`, `MaxModelClusterOpsPerFrame`). | Observed: parameter names. | The LOD/visibility scan over every chunk is time-sliced (1 ms a frame); edits and newly meshable chunks are rescanned directly; streaming only walks the slab a viewer moved into; collision shapes build nearest-first within 2 ms a frame. |
+| Collision is a custom voxel-mesh shape, not a rebuilt triangle tree. | Inferred: `convexVoxelMeshShapeCast` and siblings. | Not possible through Godot's physics server; Jolt trimeshes (~1.2 ms each) are budgeted instead, and an edit remeshes only chunks that read a voxel it wrote (the old range covered 2×2×2 chunks for most digs). |
+| Voxel meshes have three LOD levels by distance and error (`VoxelMeshLodParam`: `Lod1Dist 300 / Lod2Dist 700`, `Lod1Value` / `Lod2Value`). | Observed: the `.bgyml` params. | Far-field chunks now mesh with the collapse LOD as well (−21 % triangles in the procedural profile). |
+| Dynamic resolution with upscaling (`NdsrUpscaleMinRate` / `NdsrUpscaleMaxRate`, `IsUseSuperResolution`), SMAA as the AA (`SMAA_For_NDSR`). | Observed: parameter names and the library version string. | `demo/dynamic_resolution.gd` (FSR 1, 0.7–1.0) and SMAA instead of TAA. |
+| Half- and quarter-resolution effect buffers (`HalfDepth`, `IsQuarter%d`, `BloomBufferBaseScale`, `RaymarchFog_UpScale`). | Observed: names. | The leaf jump flood runs on a half-resolution grid. |
+| Baked AO for the voxel field (`VoxelFieldAO`, `WorldAoDrawer`); no screen-space GI found. | Observed: names; a search for SSGI/SSIL-like names found none. | SSIL is off in the demo; the mesher's per-vertex AO stays. |
+| Shaders and pipelines are ready before play. | Not examined in the game (console builds ship compiled shaders). | `VoxelUtil.prewarm` draws debris and bomb materials once while the spawn streams in. |
+
+What changed on the GPU side, at 1080p in the procedural view the benchmark calls `view0` (ms saved):
+the leaf jump flood (8.2 → 0.9: 4 bytes a pixel instead of 16, half-resolution cells), cel + outline as one
+compute pass on the colour buffer instead of two full-screen quads with `hint_screen_texture`, whose blurred
+mip chain cost ~2.7, SMAA instead of TAA (3), SSIL off (3.2), a 4096 shadow atlas (1.4, same look), and
+triplanar terrain sampling that skips projections under 2 % weight and the unused side of a material blend
+(~2).
+
 ## Where this engine differs
 
 - Voxels are 2 bytes (density, material); blends are derived per vertex rather than authored.
 - LOD collapse runs per chunk. Cells on a chunk's +faces never collapse, which is what keeps seams
   watertight for any mix of LODs but caps the saving at roughly half the triangles.
 - A normal-cone test stands in for the game's topology penalties when collapsing.
-- Collision is the LOD0 mesh as a Jolt trimesh per chunk, near the camera only.
+- Collision is the LOD0 mesh as a Jolt trimesh per chunk, near the camera only, rebuilt within a frame
+  budget: for a few frames after an edit, physics sees the previous surface.
 - Surface patterns come from one seamless 3D noise texture instead of authored triplanar sets.
 - The world is good to about 8 km from the origin. Stock single-precision Godot jitters the camera, the
   player and physics further out whatever the voxel code does. Mesh and collision vertices are relative to
