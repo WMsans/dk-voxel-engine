@@ -18,6 +18,25 @@ static func wait_ready(world: VoxelWorld, aabb: AABB, need_collision: bool, fram
 		await world.get_tree().process_frame
 
 
+## Draws each [mesh, material] pair once, tiny, in front of `cam` for two frames, so its shaders and pipelines
+## compile during loading instead of stalling the frame something first uses them. An exported game bakes its
+## shaders; this also covers a run from the editor and the pipelines.
+static func prewarm(cam: Camera3D, pairs: Array) -> void:
+	var nodes: Array[MeshInstance3D] = []
+	for pair in pairs:
+		var mi := MeshInstance3D.new()
+		mi.mesh = pair[0]
+		mi.material_override = pair[1]
+		mi.scale = Vector3.ONE * 0.001
+		mi.position = Vector3(0, 0, -1)
+		cam.add_child(mi)
+		nodes.append(mi)
+	for i in 2:
+		await cam.get_tree().process_frame
+	for mi in nodes:
+		mi.queue_free()
+
+
 ## Stamps every mesh of `scene` into the world at `xf`: one build_mesh edit per MeshInstance3D. Meshes whose
 ## first surface material is named "Leaf*" get `leaf_material` and go last, so leaves only fill the air around
 ## the wood; everything else gets `wood_material`.

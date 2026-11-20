@@ -38,12 +38,16 @@ struct WorldState {
 	struct Chunk {
 		ChunkKey key;
 		RID mesh, instance, body, shape;
+		int32_t vcap = 0, icap = 0; // the pooled mesh's vertex and index capacity
 		Vector3 offset; // chunk origin in metres, relative to the world node (mesh vertices are chunk-relative)
 		int8_t lod = -1; // LOD on screen, -1 = never meshed
 		bool collision = false; // the mesh on screen was built with collision
+		bool coll_dirty = false; // its collision faces wait in coll_queue: the body (if any) is the previous mesh's
+		PackedVector3Array coll_faces; // the faces build_collisions() turns into the body
 		bool skirts = false; // near field: the mesh on screen has skirts (see near_skirts)
 		bool queued = false;
 		bool gen_queued = false; // endless: a generate job for this chunk is on the worker queue
+		uint8_t ready = 0; // endless: generated chunks in its 3x3x3 block; at 27 it can be meshed
 		bool visible = true; // the instance's visibility, as last pushed to the RenderingServer
 		bool split = false; // far levels: its children are all meshed and drawn in its place
 		bool out_of_reach = false; // far levels: generated but not meshed, because no viewer reached it yet
@@ -92,6 +96,7 @@ struct WorldState {
 	String save_directory; // empty = edits never reach disk; the unload store differs, the path is the same
 	String generator_class; // `generator`'s class name in save headers, empty when there is none
 	std::vector<Viewer> active_viewers;
+	std::vector<Viewer> streamed_viewers; // endless: the viewers as the last stream_endless() loaded around them
 	// Far field (endless only), the way voxy and VoxelLodTerrain do it: level k = 1..far_levels is a coarse copy of the
 	// world, cell * 2^(k+1), filled straight from the generator and reaching view_distance * 2^k. A level-k chunk covers
 	// whole level-(k-1) chunks (4x4x4 near chunks, then 2x2x2) and hands over to them once all are meshed (see
@@ -122,6 +127,20 @@ struct WorldState {
 	// of the ShaderMaterial's properties keeps the generated data out of any scene or .tres the material is saved in.
 	Ref<Texture2DArray> material_arrays[4];
 
+	// Chunks whose collision shape is behind their mesh. Building a Jolt trimesh costs ~1 ms a chunk and must
+	// happen on the main thread, so build_collisions() works through these nearest-first within a frame budget,
+	// the way Bananza's display-mesh updaters trail its edits; the render mesh never waits for it.
+	std::vector<ChunkKey> coll_queue;
+	// Chunk meshes are recycled, never reallocated per upload (Bananza keeps its display meshes in fixed unit
+	// heaps): a freed chunk's mesh + instance wait here by capacity class, and uploads rewrite buffers in place.
+	struct PooledMesh {
+		RID mesh, instance;
+		int32_t vcap = 0, icap = 0;
+	};
+	static constexpr int MESH_POOL_MAX = 4096;
+	std::unordered_map<uint64_t, std::vector<PooledMesh>> mesh_pool;
+	int mesh_pool_size = 0;
+	uint64_t mesh_format = 0; // the surface format Godot stores for chunk meshes, read back from the first one
 	std::priority_queue<Job> jobs;
 	std::vector<Result> results;
 	std::deque<Result> pending;
@@ -131,7 +150,9 @@ struct WorldState {
 	bool quit = false;
 
 	uint64_t generation = 0; // bumped by reset(): results queued before it are never applied
-	bool need_scan = true;
+	bool need_scan = true; // a pass over every chunk is wanted: viewers moved or LOD settings changed
+	size_t scan_left = 0, scan_pos = 0; // the pass in progress: chunks still to visit, and the next one
+	std::vector<ChunkKey> rescan; // chunks to scan this frame: an edit's, and ones generated_changed() completed
 	bool need_stream = true; // endless: viewers moved, so load/unload; a finished job alone only needs the mesh pass
 	int64_t stat_tris = 0;
 	int stat_meshes = 0, stat_bodies = 0, stat_jobs = 0;
@@ -151,12 +172,23 @@ struct WorldState {
 
 // voxel_chunks.cpp: chunk RID lifecycle.
 void free_chunk(WorldState &st, WorldState::Chunk &c, bool body_only = false);
+void free_mesh_pool(WorldState &st); // frees the recycled meshes: on reset, on leaving the world, at exit
+// Draws the mesh now; with `collision`, queues its faces for build_collisions().
 void upload_chunk(WorldState &st, VoxelWorld &world, WorldState::Chunk &c, const MeshData &m, const Transform3D &xf, bool collision);
+// Builds queued collision shapes, nearest to a viewer first, until `budget_usec` has passed since `start_usec`
+// (at least one). Returns how many are still queued.
+int build_collisions(WorldState &st, VoxelWorld &world, uint64_t start_usec, uint64_t budget_usec);
 
 // voxel_stream.cpp: viewers, streaming, LOD scanning and the worker pool.
 void update_viewers(WorldState &st, VoxelWorld &world);
-void scan(WorldState &st);
+// Streams (endless), scans the chunks in `rescan`, then continues the pass over every chunk for up to
+// `budget_usec` (0 = finish it).
+void scan(WorldState &st, uint64_t budget_usec = 0);
 void stream_endless(WorldState &st);
+// Endless: chunk `key` was just generated (+1) or is about to be unloaded (-1). Keeps every neighbour's `ready`
+// count, and rescans each chunk whose block this completes, so new terrain queues the frame it can, without a
+// pass over every loaded chunk.
+void generated_changed(WorldState &st, const ChunkKey &key, int delta);
 void worker(WorldState &st);
 void start_workers(WorldState &st);
 void stop_workers(WorldState &st);
@@ -170,6 +202,10 @@ void apply_far(WorldState &st, VoxelWorld &world, const Transform3D &gx, WorldSt
 // A level-k chunk was meshed (pass it as `c`) or unloaded: puts the right level on screen there.
 void chunk_changed(WorldState &st, int k, const ChunkKey &key, WorldState::Chunk *c = nullptr);
 void refresh_visibility(WorldState &st); // after st.shown changed
+// A level-k chunk and its 26 neighbours are generated, read from the main thread's own records (an entry that
+// is not gen_queued). Never the volume's lock: workers hold it shared while meshing, and one waiting to insert a
+// chunk would block the main thread behind every mesh job in flight.
+bool neighbors_generated(WorldState &st, int k, const ChunkKey &key);
 // A near chunk needs skirts only where it meets a level-1 chunk drawn coarse: near seams are bit-exact, and a skirt
 // there only pokes through thin dug walls and shows from inside the ground.
 bool near_skirts(const WorldState &st, const ChunkKey &key);

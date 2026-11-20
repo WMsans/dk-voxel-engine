@@ -7,9 +7,8 @@
 [ext_resource type="VoxelMaterialSet" uid="uid://d1tvfsxrck1cn" path="res://demo/materials.tres" id="5_mats"]
 [ext_resource type="Shader" uid="uid://wwytu2krken8" path="res://demo/cel/voxel_terrain_cel.gdshader" id="6_shader"]
 [ext_resource type="PackedScene" path="res://demo/bomb.tscn" id="7_bomb"]
-[ext_resource type="Script" uid="uid://o0hpuy73bhcv" path="res://demo/cel/cel_shading_post_process.gd" id="8_cel"]
-[ext_resource type="Script" uid="uid://yfvhss46j7tm" path="res://demo/cel/outline_post_process.gd" id="9_outline"]
-[ext_resource type="Script" uid="uid://dayqkuaj2qde8" path="res://demo/cel/leaf_seed_effect.gd" id="10_seed"]
+[ext_resource type="Script" path="res://demo/cel/cel_effect.gd" id="10_cel"]
+[ext_resource type="Script" path="res://demo/dynamic_resolution.gd" id="12_drs"]
 [ext_resource type="Script" uid="uid://ckcsn6i6nvtqr" path="res://demo/voxel_tools.gd" id="11_tools"]
 [ext_resource type="ArrayMesh" path="res://demo/shards/shard_0.res" id="s0"]
 [ext_resource type="ArrayMesh" path="res://demo/shards/shard_1.res" id="s1"]
@@ -42,7 +41,7 @@ tonemap_mode = 4
 ssao_enabled = true
 ssao_radius = 1.6
 ssao_intensity = 2.2
-ssil_enabled = true
+ssil_enabled = false
 glow_enabled = true
 glow_intensity = 0.6
 glow_bloom = 0.05
@@ -55,17 +54,14 @@ adjustment_enabled = true
 adjustment_contrast = 1.08
 adjustment_saturation = 1.25
 
-[sub_resource type="CompositorEffect" id="CompositorEffect_seed"]
-resource_local_to_scene = false
-resource_name = ""
-enabled = true
-effect_callback_type = 4
-needs_motion_vectors = false
-needs_normal_roughness = true
-script = ExtResource("10_seed")
+[sub_resource type="CompositorEffect" id="CompositorEffect_cel"]
+script = ExtResource("10_cel")
+outline_color = Color(0.219, 0.219, 0.3, 1)
+thickness = 2.0
+depth_threshold = 2.0
 
 [sub_resource type="Compositor" id="Compositor_cel"]
-compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_seed")])
+compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_cel")])
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_terrain"]
 render_priority = 0
@@ -157,11 +153,5 @@ text = "+"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="CelShadingPostProcess" type="Node3D" parent="." unique_id=1853869958]
-script = ExtResource("8_cel")
-
-[node name="OutlinePostProcess" type="Node3D" parent="." unique_id=214253076]
-script = ExtResource("9_outline")
-outline_color = Color(0.219, 0.219, 0.3, 1)
-thickness = 2.0
-depth_threshold = 2.0
+[node name="DynamicResolution" type="Node" parent="." unique_id=902114537]
+script = ExtResource("12_drs")

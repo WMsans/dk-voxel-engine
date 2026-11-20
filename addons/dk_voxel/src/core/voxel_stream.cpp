@@ -11,6 +11,18 @@
 #include <godot_cpp/classes/world3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 
+#include <algorithm>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#elif defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#elif defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include <chrono>
 #include <cmath>
 
@@ -61,6 +73,18 @@ void update_viewers(WorldState &st, VoxelWorld &world) {
 }
 
 
+// Workers yield to the main and render threads: a frame is late when they lose a core to meshing, while a
+// chunk meshed a few milliseconds later is not. On Apple Silicon this also steers them to efficiency cores.
+static void lower_thread_priority() {
+#if defined(__APPLE__)
+	pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#elif defined(__linux__)
+	setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);
+#elif defined(_WIN32)
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+}
+
 void start_workers(WorldState &st) {
 	if (!st.vol || st.workers.size() || Engine::get_singleton()->is_editor_hint()) return;
 	for (int i = 0; i < st.thread_count(); i++) st.workers.emplace_back([&st] { worker(st); });
@@ -83,6 +107,7 @@ void stop_workers(WorldState &st) {
 
 
 void worker(WorldState &st) {
+	lower_thread_priority();
 	for (;;) {
 		dkv::WorldState::Result r;
 		{
@@ -121,6 +146,24 @@ void worker(WorldState &st) {
 }
 
 
+void generated_changed(WorldState &st, const ChunkKey &key, int delta) {
+	auto self = st.chunk_lookup.find(key);
+	if (self == st.chunk_lookup.end()) return;
+	WorldState::Chunk &k = st.chunks[self->second];
+	if (delta > 0) k.ready = 0;
+	for (int i = 0; i < 27; i++) {
+		auto it = st.chunk_lookup.find(ChunkKey(key.x + i % 3 - 1, key.y + i / 3 % 3 - 1, key.z + i / 9 - 1));
+		if (it == st.chunk_lookup.end()) continue;
+		WorldState::Chunk &n = st.chunks[it->second];
+		if (n.gen_queued) continue;
+		if (delta > 0) k.ready++;
+		if (&n == &k) continue;
+		n.ready = (uint8_t)(n.ready + delta);
+		if (delta > 0 && n.ready == 27) st.rescan.push_back(n.key);
+	}
+	if (delta > 0 && k.ready == 27) st.rescan.push_back(k.key);
+}
+
 void stream_endless(WorldState &st) {
 	const float cs = dkv::CHUNK * st.vol->cell;
 	const float margin = cs;
@@ -142,6 +185,7 @@ void stream_endless(WorldState &st) {
 		}
 		if (wanted) continue;
 		const dkv::ChunkKey key = c.key;
+		generated_changed(st, key, -1);
 		store_chunk(st, key);
 		gone.push_back(key);
 		free_chunk(st, c);
@@ -155,7 +199,13 @@ void stream_endless(WorldState &st) {
 	}
 	st.vol->remove_chunks(gone);
 
-	for (const dkv::WorldState::Viewer &v : st.active_viewers) {
+	// Loading. Everything inside a viewer's reach at the last stream is loaded (or queued) and still wanted, so
+	// only the slab it just moved into needs the hash lookups; the rest of the box is skipped on arithmetic.
+	for (size_t vi = 0; vi < st.active_viewers.size(); vi++) {
+		const dkv::WorldState::Viewer &v = st.active_viewers[vi];
+		const bool same_set = st.streamed_viewers.size() == st.active_viewers.size(); // else pairing them up is a guess
+		const dkv::WorldState::Viewer *was = same_set ? &st.streamed_viewers[vi] : nullptr;
+		if (was && (was->view_distance != v.view_distance || was->vertical_view_distance != v.vertical_view_distance)) was = nullptr;
 		const float rh = v.view_distance + margin, rv = v.vertical_view_distance + margin, rh2 = rh * rh;
 		const int x0 = (int)std::floor((v.pos.x - rh) / cs), x1 = (int)std::floor((v.pos.x + rh) / cs);
 		const int z0 = (int)std::floor((v.pos.z - rh) / cs), z1 = (int)std::floor((v.pos.z + rh) / cs);
@@ -164,26 +214,22 @@ void stream_endless(WorldState &st) {
 			for (int y = y0; y <= y1; y++)
 				for (int x = x0; x <= x1; x++) {
 					dkv::ChunkKey key(x, y, z);
-					int32_t idx;
-					auto it = st.chunk_lookup.find(key);
-					if (it != st.chunk_lookup.end()) {
-						dkv::WorldState::Chunk &c = st.chunks[it->second];
-						if (c.gen_queued || st.vol->has_chunk(x, y, z)) continue;
-						c.gen_queued = true;
-						idx = it->second;
-					} else {
-						dkv::Vec3 o = st.vol->chunk_origin(x, y, z);
-						Vector3 offset((float)o.x, (float)o.y, (float)o.z), center = offset + Vector3(0.5, 0.5, 0.5) * cs;
-						float dx = center.x - v.pos.x, dz = center.z - v.pos.z, dy = center.y - v.pos.y;
-						if (dx * dx + dz * dz > rh2 || std::fabs(dy) > rv) continue;
-						dkv::WorldState::Chunk nc;
-						nc.key = key;
-						nc.offset = offset;
-						nc.gen_queued = true;
-						idx = (int32_t)st.chunks.size();
-						st.chunk_lookup[key] = idx;
-						st.chunks.push_back(std::move(nc));
+					dkv::Vec3 o = st.vol->chunk_origin(x, y, z);
+					Vector3 offset((float)o.x, (float)o.y, (float)o.z), center = offset + Vector3(0.5, 0.5, 0.5) * cs;
+					float dx = center.x - v.pos.x, dz = center.z - v.pos.z, dy = center.y - v.pos.y;
+					if (dx * dx + dz * dz > rh2 || std::fabs(dy) > rv) continue;
+					if (was) {
+						const float ox = center.x - was->pos.x, oz = center.z - was->pos.z;
+						if (ox * ox + oz * oz <= rh2 && std::fabs(center.y - was->pos.y) <= rv) continue; // loaded last time
 					}
+					if (st.chunk_lookup.count(key)) continue; // generated, or queued to be
+					dkv::WorldState::Chunk nc;
+					nc.key = key;
+					nc.offset = offset;
+					nc.gen_queued = true;
+					const int32_t idx = (int32_t)st.chunks.size();
+					st.chunk_lookup[key] = idx;
+					st.chunks.push_back(std::move(nc));
 					dkv::WorldState::Job j;
 					j.gen = st.generation;
 					j.is_gen = true;
@@ -211,9 +257,60 @@ void stream_endless(WorldState &st) {
 }
 
 
-void scan(WorldState &st) {
+// One chunk: the LOD, skirts and collision it should have now; queues a job into `add` when what is on screen
+// differs.
+static void scan_chunk(WorldState &st, int i, std::vector<WorldState::Job> &add) {
 	const float cs = dkv::CHUNK * st.vol->cell, hyst = cs * 0.5f;
+	dkv::WorldState::Chunk &c = st.chunks[i];
+	// Not queued = generated: entries start queued and are erased with their volume chunk, so no locked lookup.
+	if (c.gen_queued) return;
+	Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
+	float d = 0.0f;
+	bool in_mesh = st.vol->bounded, want_coll = false;
+	for (size_t v = 0; v < st.active_viewers.size(); v++) {
+		const dkv::WorldState::Viewer &vw = st.active_viewers[v];
+		float dx = center.x - vw.pos.x, dz = center.z - vw.pos.z, dy = center.y - vw.pos.y;
+		float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (v == 0 || dist < d) d = dist;
+		if (dx * dx + dz * dz <= vw.view_distance * vw.view_distance && std::fabs(dy) <= vw.vertical_view_distance) in_mesh = true;
+		// Bodies only exist at LOD0: never ask for one past the LOD1 band, or the chunk is re-queued forever.
+		const float coll = MIN(vw.collision_distance, st.lod1_distance - cs);
+		if (dist < (c.collision ? coll + hyst : coll)) want_coll = true;
+	}
+	if (!in_mesh) {
+		if (c.lod < 0) return; // margin ring: loaded so inner chunks have neighbours, never meshed
+		want_coll = false;
+	}
+	int want;
+	if (!in_mesh) {
+		want = c.lod; // keep what is on screen until the chunk is unloaded
+	} else {
+		int lo = st.lod_at(d - hyst), hi = st.lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
+		want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
+	}
+	if (!want_coll && (c.body.is_valid() || c.coll_dirty)) free_chunk(st, c, true);
+	const bool skirts = in_mesh ? dkv::near_skirts(st, c.key) : c.skirts;
+	bool stale = c.applied_version != c.version;
+	if (!stale && c.lod == want && c.skirts == skirts && (c.collision || !want_coll)) return;
+	if (c.queued && c.queued_version == c.version) return;
+	if (!neighbors_generated(st, 0, c.key)) return;
+	c.queued = true;
+	c.queued_version = c.version;
+	bool urgent = stale && c.lod >= 0; // an edit to something already on screen
+	dkv::WorldState::Job j;
+	j.gen = st.generation;
+	j.key = c.key;
+	j.prio = urgent ? d - 1e6f : d;
+	j.index = i;
+	j.lod = (int8_t)want;
+	j.collision = want_coll;
+	j.skirts = skirts;
+	j.urgent = urgent;
+	j.version = c.version;
+	add.push_back(std::move(j));
+}
 
+void scan(WorldState &st, uint64_t budget_usec) {
 	if (!st.vol->bounded && st.need_stream) {
 		stream_endless(st);
 		st.need_far = true;
@@ -221,57 +318,36 @@ void scan(WorldState &st) {
 	st.need_stream = false;
 
 	std::vector<dkv::WorldState::Job> add;
-	for (int i = 0; i < (int)st.chunks.size(); i++) {
-		dkv::WorldState::Chunk &c = st.chunks[i];
-		// Not queued = generated: entries start queued and are erased with their volume chunk, so no locked lookup.
-		if (c.gen_queued) continue;
-		Vector3 center = c.offset + Vector3(0.5, 0.5, 0.5) * cs;
-		float d = 0.0f;
-		bool in_mesh = st.vol->bounded, want_coll = false;
-		for (size_t v = 0; v < st.active_viewers.size(); v++) {
-			const dkv::WorldState::Viewer &vw = st.active_viewers[v];
-			float dx = center.x - vw.pos.x, dz = center.z - vw.pos.z, dy = center.y - vw.pos.y;
-			float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-			if (v == 0 || dist < d) d = dist;
-			if (dx * dx + dz * dz <= vw.view_distance * vw.view_distance && std::fabs(dy) <= vw.vertical_view_distance) in_mesh = true;
-			// Bodies only exist at LOD0: never ask for one past the LOD1 band, or the chunk is re-queued forever.
-			const float coll = MIN(vw.collision_distance, st.lod1_distance - cs);
-			if (dist < (c.collision ? coll + hyst : coll)) want_coll = true;
+	// Targeted first, all of them: an edit's chunks and newly meshable ones, so both queue the frame they happen
+	// without walking every loaded chunk.
+	if (!st.rescan.empty()) {
+		std::sort(st.rescan.begin(), st.rescan.end(), [](const ChunkKey &a, const ChunkKey &b) { return a.x != b.x ? a.x < b.x : a.y != b.y ? a.y < b.y : a.z < b.z; });
+		st.rescan.erase(std::unique(st.rescan.begin(), st.rescan.end()), st.rescan.end());
+		for (const ChunkKey &key : st.rescan) {
+			int i = -1;
+			if (st.vol->bounded) {
+				if (st.vol->in_bounds(key.x, key.y, key.z)) i = st.chunk_index(key.x, key.y, key.z);
+			} else if (auto it = st.chunk_lookup.find(key); it != st.chunk_lookup.end()) {
+				i = it->second;
+			}
+			if (i >= 0) scan_chunk(st, i, add);
 		}
-		if (!in_mesh) {
-			if (c.lod < 0) continue; // margin ring: loaded so inner chunks have neighbours, never meshed
-			want_coll = false;
-		}
-		int want;
-		if (!in_mesh) {
-			want = c.lod; // keep what is on screen until the chunk is unloaded
-		} else {
-			int lo = st.lod_at(d - hyst), hi = st.lod_at(d + hyst); // hysteresis: keep the current LOD while it is plausible
-			want = (c.lod == lo || c.lod == hi) ? c.lod : lo;
-		}
-		if (!want_coll && c.body.is_valid()) free_chunk(st, c, true);
-		const bool skirts = in_mesh ? dkv::near_skirts(st, c.key) : c.skirts;
-		bool stale = c.applied_version != c.version;
-		if (!stale && c.lod == want && c.skirts == skirts && (c.collision || !want_coll)) continue;
-		if (c.queued && c.queued_version == c.version) continue;
-		// Last: 27 locked lookups, so only for the few chunks that would queue a job, never all loaded ones.
-		if (!st.vol->neighbors_ready(c.key.x, c.key.y, c.key.z)) continue;
-		c.queued = true;
-		c.queued_version = c.version;
-		bool urgent = stale && c.lod >= 0; // an edit to something already on screen
-		dkv::WorldState::Job j;
-		j.gen = st.generation;
-		j.key = c.key;
-		j.prio = urgent ? d - 1e6f : d;
-		j.index = i;
-		j.lod = (int8_t)want;
-		j.collision = want_coll;
-		j.skirts = skirts;
-		j.urgent = urgent;
-		j.version = c.version;
-		add.push_back(std::move(j));
+		st.rescan.clear();
 	}
-	st.need_scan = false;
+	// Then the pass over every chunk that moving viewers or new settings ask for, a slice a frame: tens of
+	// thousands of chunks are loaded around a viewer, and the bands they sit in change a few at a time.
+	// A new request restarts the count, not the cursor, so a viewer that keeps moving cannot starve the tail.
+	if (st.need_scan) {
+		st.scan_left = st.chunks.size();
+		st.need_scan = false;
+	}
+	const auto t0 = std::chrono::steady_clock::now();
+	for (int n = 1; st.scan_left > 0 && !st.chunks.empty(); n++) {
+		if (st.scan_pos >= st.chunks.size()) st.scan_pos = 0;
+		scan_chunk(st, (int)st.scan_pos++, add);
+		st.scan_left--;
+		if (budget_usec && (n & 63) == 0 && std::chrono::steady_clock::now() - t0 >= std::chrono::microseconds(budget_usec)) break;
+	}
 	if (add.empty()) return;
 	{
 		std::lock_guard lk(st.qm);

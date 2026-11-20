@@ -301,6 +301,14 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 	// corners sit up to sqrt(3) cells from the cut, and an unpainted corner bleeds the outer material onto it.
 	const float reach = mode == ERASE && expose_inner ? 2.0f : 1.0f;
 	std::vector<std::array<int, 3>> paint;
+	int cl[3] = {INT32_MAX, INT32_MAX, INT32_MAX}, ch[3] = {INT32_MIN, INT32_MIN, INT32_MIN}; // voxels actually written
+	auto grow = [&](int x, int y, int z) {
+		const int v[3] = {x, y, z};
+		for (int i = 0; i < 3; i++) {
+			cl[i] = std::min(cl[i], v[i]);
+			ch[i] = std::max(ch[i], v[i]);
+		}
+	};
 	auto old_d = [&](int x, int y, int z) -> float { return in_region(x, y, z) ? old[ri(x, y, z)] : get_unlocked(x, y, z).d; };
 	for (int z = lo[2]; z <= hi[2]; z++)
 		for (int y = lo[1]; y <= hi[1]; y++)
@@ -331,11 +339,15 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 				if (nv.d < v.d) res.removed[v.m] += (v.d - nv.d) / 255.0f;
 				*dst = nv;
 				chg[ri(x, y, z)] = 1;
+				grow(x, y, z);
 				res.changed = true;
 			}
 	if (!res.changed) return res;
 	for (const auto &p : paint) // no chg mark: density is unchanged, so its Hermite edges stay valid
-		if (Voxel *dst = writable(p[0], p[1], p[2])) dst->m = inner[dst->m];
+		if (Voxel *dst = writable(p[0], p[1], p[2])) {
+			dst->m = inner[dst->m];
+			grow(p[0], p[1], p[2]);
+		}
 
 	// Hermite data. Sharp edits store the exact crossing and analytic normal of every edge the shape now
 	// defines; everything else that was touched is erased so it falls back to the density field.
@@ -375,10 +387,12 @@ EditResult Volume::edit(Shape shape, Mode mode, Vec3 c, Vec3 half, const float B
 					hd[1] = (uint8_t)(int8_t)std::lround(n.x * 127);
 					hd[2] = (uint8_t)(int8_t)std::lround(n.y * 127);
 				}
-	// A chunk reads samples [16c - 2, 16c + 17].
+	// A chunk reads samples [16c - 2, 16c + 17], and a written voxel's Hermite edges belong to the cell before it
+	// too. Only chunks that read a voxel the edit wrote are remeshed: the scan box above is 2 cells bigger than
+	// the shape on every side, and remeshing from it would rebuild 2x2x2 chunks (and their collision) for most digs.
 	for (int i = 0; i < 3; i++) {
-		res.cmin[i] = floordiv(lo[i] - 3, CHUNK);
-		res.cmax[i] = floordiv(hi[i] + 2, CHUNK);
+		res.cmin[i] = floordiv(cl[i] - 1 - 3, CHUNK);
+		res.cmax[i] = floordiv(ch[i] + 2, CHUNK);
 		if (bounded) {
 			res.cmin[i] = std::max(res.cmin[i], bmin[i]);
 			res.cmax[i] = std::min(res.cmax[i], bmax[i] - 1);

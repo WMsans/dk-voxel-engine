@@ -1,4 +1,4 @@
-// voxel_terrain.gdshader for the cel look (cel_shading.gdshader, outline.gdshader, LeafSeedEffect).
+// voxel_terrain.gdshader for the cel look (CelEffect).
 // Lambert and no specular, so the cel ramp sees view-independent light. Every surface writes roughness 1.0
 // except the leaves, which write leaf.gdshader's marker 0.25 + 0.5 * bump profile for the scallop pass.
 shader_type spatial;
@@ -6,7 +6,7 @@ render_mode diffuse_lambert, specular_disabled;
 
 // The material id whose voxels are leaves; demo/world.gd sets it from its LEAVES constant.
 uniform int leaf_material = -1;
-// Bump radius in screen pixels, shared with leaf_scallop.gdshaderinc.
+// Bump radius in screen pixels, shared with cel_outline.glsl (CelEffect reads the project setting).
 global uniform float leaf_bump_px;
 
 // leaf.gdshader lays its bumps around each clump's on-screen centre; a voxel canopy has no clumps, so

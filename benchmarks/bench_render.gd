@@ -3,10 +3,11 @@ extends SceneTree
 ##   godot --path . -s benchmarks/bench_render.gd
 ##   godot --path . -s benchmarks/bench_render.gd -- --profile=level --frames=150 --resolution=1280x720
 ## For each terrain profile it waits for the demo's spawn, then renders fixed views under three settings:
-##   full     the demo as shipped (cel + outline passes, leaf-seed compositor, SSAO, SSIL, glow, shadows)
-##   no_post  without the cel/outline quads and the compositor effect
-##   minimal  no_post, and also without SSAO, SSIL, glow and sun shadows
-## then flies an orbit around the spawn (streaming while rendering). VSync is off and max_fps is 0.
+##   full     the demo as shipped (the CelEffect compositor pass, SSAO, SSIL, glow, shadows)
+##   no_post  without the CelEffect pass
+##   minimal  no_post, and also without SSAO, SSIL, glow and sun shadows (each only if the scene enables it)
+## then flies an orbit around the spawn (streaming while rendering), then plays: walks while digging and
+## bombing, and sprints in fly mode (see play()). VSync is off and max_fps is 0.
 ## GPU and render-CPU times come from the RenderingServer's viewport measurements.
 ## Writes benchmarks/results/render_<time>.json.
 
@@ -87,10 +88,63 @@ func run_profile(profile: String) -> void:
 	var s := world.get_stats()
 	lib.record("%s orbit" % profile, {"frames": n, "fps_avg": 1000.0 / Lib.mean(times), "frame_p50_ms": Lib.percentile(times, 50),
 			"frame_p95_ms": Lib.percentile(times, 95), "frame_p99_ms": Lib.percentile(times, 99), "frame_max_ms": Lib.percentile(times, 100),
-			"triangles": s.triangles, "meshes": s.meshes})
+			"triangles": s.triangles, "meshes": s.meshes, "render_scale": root.scaling_3d_scale})
+	await play(main, profile)
 	main.free()
 	for i in 5:
 		await process_frame
+
+
+## Play: what a player does, under the full settings. Walks (real input actions, physics body) while digging
+## at the tools' own rate and throwing a bomb every 1.5 s, so remeshing, collision rebuilds, debris and bombs
+## all land in the measured frames; then sprints in fly mode (streaming at ~28 m/s).
+func play(main: Node, profile: String) -> void:
+	var player: FlyWalkController = main.player
+	var cam: Camera3D = player.cam
+	var tools: VoxelTools = main.tools
+	var world: VoxelWorld = main.world
+	player.fly = false
+	player.global_position = VoxelUtil.ground(world, main.spawn_position()) + Vector3.UP * 2.0
+	player.velocity = Vector3.ZERO
+	cam.rotation = Vector3(-0.45, 0, 0) # looking at the ground a few metres ahead
+	await create_timer(0.5).timeout
+	await lib.await_idle(world, 30000.0, 10)
+	for phase in ["walk+dig", "fly"]:
+		var fly: bool = phase == "fly"
+		player.fly = fly
+		cam.rotation.x = -0.1 if fly else -0.45
+		Input.action_press(&"ui_up")
+		var times := PackedFloat64Array()
+		var t_end := Lib.now_ms() + 10000.0
+		var next_dig := 0.0
+		var next_bomb := 500.0
+		var start := Lib.now_ms()
+		var last := start
+		while Lib.now_ms() < t_end:
+			var now := Lib.now_ms() - start
+			player.rotate_y((0.35 if profile == "level" else 0.08) * (Lib.now_ms() - last) / 1000.0) # level: circle inside the bounds
+			if not fly and now >= next_dig: # the tools' LMB path, at their 0.07 s cooldown
+				next_dig = now + 70.0
+				var hit := world.raycast(cam.global_position, -cam.global_basis.z, tools.reach)
+				if not hit.is_empty():
+					tools.dug.emit(world.dig_sphere(hit.position - hit.normal * tools.brush * 0.3, tools.brush, tools.dig_power), hit.position, 4.0, tools.brush)
+			if not fly and now >= next_bomb:
+				next_bomb = now + 1500.0
+				tools.throw_bomb()
+			await process_frame
+			var t := Lib.now_ms()
+			times.append(t - last)
+			last = t
+		Input.action_release(&"ui_up")
+		var over := 0
+		for f in times:
+			if f > 1000.0 / 60.0:
+				over += 1
+		var s := world.get_stats()
+		lib.record("%s play %s" % [profile, phase], {"frames": times.size(), "fps_avg": 1000.0 / Lib.mean(times),
+				"frame_p50_ms": Lib.percentile(times, 50), "frame_p99_ms": Lib.percentile(times, 99),
+				"frame_max_ms": Lib.percentile(times, 100), "frames_over_16.7ms": over, "triangles": s.triangles, "bodies": s.bodies,
+				"render_scale": root.scaling_3d_scale})
 
 
 ## [camera position, look-at] pairs, the demo's own beauty-shot views.
@@ -115,19 +169,22 @@ func place(world: VoxelWorld, player: Node3D, cam: Camera3D, at: Vector3, target
 	await lib.await_idle(world, 30000.0, 10)
 
 
+## Turns features off for a setting; "full" restores what the scene itself enables (as first seen here).
 func apply_setting(main: Node, setting: String) -> void:
 	var post := setting == "full"
 	var fx := setting != "minimal"
-	(main.get_node("CelShadingPostProcess") as Node3D).visible = post
-	(main.get_node("OutlinePostProcess") as Node3D).visible = post
 	var we := main.get_node("WorldEnvironment") as WorldEnvironment
+	var env := we.environment
+	var sun := main.get_node("Sun") as DirectionalLight3D
+	if not main.has_meta(&"bench_scene"):
+		main.set_meta(&"bench_scene", [env.ssao_enabled, env.ssil_enabled, env.glow_enabled, sun.shadow_enabled])
+	var scene: Array = main.get_meta(&"bench_scene")
 	for e: CompositorEffect in we.compositor.compositor_effects:
 		e.enabled = post
-	var env := we.environment
-	env.ssao_enabled = fx
-	env.ssil_enabled = fx
-	env.glow_enabled = fx
-	(main.get_node("Sun") as DirectionalLight3D).shadow_enabled = fx
+	env.ssao_enabled = fx and scene[0]
+	env.ssil_enabled = fx and scene[1]
+	env.glow_enabled = fx and scene[2]
+	sun.shadow_enabled = fx and scene[3]
 
 
 func measure(key: String, world: VoxelWorld) -> void:
@@ -147,5 +204,5 @@ func measure(key: String, world: VoxelWorld) -> void:
 	var s := world.get_stats()
 	lib.record(key, {"fps_avg": 1000.0 / Lib.mean(times), "frame_p50_ms": Lib.percentile(times, 50),
 			"frame_p99_ms": Lib.percentile(times, 99), "gpu_ms": Lib.mean(gpu), "render_cpu_ms": Lib.mean(cpu),
-			"triangles": s.triangles, "draw_calls": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+			"triangles": s.triangles, "render_scale": root.scaling_3d_scale, "draw_calls": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
 			"primitives": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)})

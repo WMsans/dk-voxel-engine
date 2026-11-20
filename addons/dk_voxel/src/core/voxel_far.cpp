@@ -131,6 +131,15 @@ float priority(const WorldState &st, int k, Vector3 c) {
 
 } // namespace
 
+bool neighbors_generated(WorldState &st, int k, const ChunkKey &key) {
+	if (k == 0 && st.vol->bounded) return true; // ensure_volume() filled it whole; outside the bounds reads as air
+	for (int i = 0; i < 27; i++) {
+		const WorldState::Chunk *c = find(st, k, ChunkKey(key.x + i % 3 - 1, key.y + i / 3 % 3 - 1, key.z + i / 9 - 1));
+		if (!c || c->gen_queued) return false;
+	}
+	return true;
+}
+
 void create_far(WorldState &st) {
 	st.far.clear();
 	if (!st.vol || st.vol->bounded) return; // a bounded world is loaded whole
@@ -162,14 +171,14 @@ static void queue_far_mesh(WorldState &st, int k, WorldState::Chunk &c, std::vec
 	if (c.gen_queued || (c.queued && c.queued_version == c.version) || (c.lod >= 0 && c.applied_version == c.version)) return;
 	const Vector3 ctr = center(st, k, key);
 	c.out_of_reach = !in_reach(st, k, ctr);
-	if (c.out_of_reach || !L.vol->neighbors_ready(key.x, key.y, key.z)) return; // a neighbour's generate result retries
+	if (c.out_of_reach || !neighbors_generated(st, k, key)) return; // a neighbour's generate result retries
 	c.queued = true;
 	c.queued_version = c.version;
 	WorldState::Job j;
 	j.gen = st.generation;
 	j.level = (int8_t)k;
 	j.key = key;
-	j.lod = 0; // the level's coarse cell is the level of detail
+	j.lod = 2; // the level's coarse cell, then octree collapse: far terrain needs neither full cell detail nor collision
 	j.version = c.version;
 	j.prio = priority(st, k, ctr);
 	out.push_back(std::move(j));

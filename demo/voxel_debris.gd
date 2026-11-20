@@ -18,6 +18,18 @@ var _shapes: Array[Shape3D] = []
 func _ready() -> void:
 	for m in shards:
 		_shapes.append(m.create_convex_shape())
+	if material_set:
+		for id in material_set.materials.size(): # up front: the first dig must not build them
+			_fragment_material(id)
+
+
+## A [mesh, material] pair per fragment material, for VoxelUtil.prewarm.
+func warm_pairs() -> Array:
+	var pairs := []
+	if not shards.is_empty():
+		for m in _mats.values():
+			pairs.append([shards[0], m])
+	return pairs
 
 
 ## `result` is what dig_sphere/dig_box return; spawns fragments of each removed material around `at`
@@ -37,13 +49,7 @@ func _material(id: int) -> VoxelMaterialDef:
 	return defs[id if id >= 0 and id < defs.size() else 0]
 
 
-func _spawn(at: Vector3, id: int, force: float) -> void:
-	if shards.is_empty():
-		return
-	if _fragments.size() >= max_fragments:
-		var old: RigidBody3D = _fragments.pop_front()
-		if is_instance_valid(old):
-			old.queue_free()
+func _fragment_material(id: int) -> Material:
 	if not _mats.has(id):
 		var d := _material(id)
 		if d.inner_material >= 0: # fragments show the broken inside too (Bananza's IsInnerFragment)
@@ -57,11 +63,21 @@ func _spawn(at: Vector3, id: int, force: float) -> void:
 		m.roughness = d.roughness
 		m.metallic = d.metallic
 		_mats[id] = m
+	return _mats[id]
+
+
+func _spawn(at: Vector3, id: int, force: float) -> void:
+	if shards.is_empty():
+		return
+	if _fragments.size() >= max_fragments:
+		var old: RigidBody3D = _fragments.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()
 	var r := randi() % shards.size()
 	var b := RigidBody3D.new()
 	var mi := MeshInstance3D.new()
 	mi.mesh = shards[r]
-	mi.material_override = _mats[id]
+	mi.material_override = _fragment_material(id)
 	var cs := CollisionShape3D.new()
 	cs.shape = _shapes[r]
 	b.add_child(mi)
@@ -75,9 +91,16 @@ func _spawn(at: Vector3, id: int, force: float) -> void:
 	b.position = at
 	b.linear_velocity = (Vector3(randf() - 0.5, randf() * 0.9 + 0.3, randf() - 0.5)).normalized() * randf_range(0.5, 1.0) * force
 	b.angular_velocity = Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5) * 12.0
+	var life := Timer.new() # a child, so it goes with the body when the cap frees it first
+	life.wait_time = randf_range(4.0, 7.0)
+	life.one_shot = true
+	life.autostart = true
+	life.timeout.connect(b.queue_free)
+	b.add_child(life)
+	b.tree_exiting.connect(_forget.bind(b))
 	add_child(b)
 	_fragments.append(b)
-	get_tree().create_timer(randf_range(4.0, 7.0)).timeout.connect(func() -> void:
-		if is_instance_valid(b):
-			_fragments.erase(b)
-			b.queue_free())
+
+
+func _forget(b: RigidBody3D) -> void:
+	_fragments.erase(b)
