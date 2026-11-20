@@ -82,7 +82,7 @@ func _spawn(at: Vector3, id: int, force: float) -> void:
 	cs.shape = _shapes[r]
 	b.add_child(mi)
 	b.add_child(cs)
-	var size := randf_range(0.12, 0.4) # shards are unit-ish; uniform scale keeps the convex shape valid
+	var size := randf_range(0.4, 0.65) # shards are unit-ish; uniform scale keeps the convex shape valid
 	mi.scale = Vector3.ONE * size
 	cs.scale = Vector3.ONE * size
 	b.mass = size * size * size * 25.0
